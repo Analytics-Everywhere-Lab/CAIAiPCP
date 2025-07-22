@@ -10,155 +10,16 @@ The system will launch a web interface where you can:
 3. Get a comprehensive care plan with explanations
 """
 
-from typing import TypedDict, List, Dict, Optional
 from uuid import uuid4
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from dataclasses import dataclass
 import torch
 import gradio as gr
 from env_config import HUGGINGFACE_MODEL_NAME
-from llm_caller import call_huggingface_llm
+from graph import create_care_plan_graph
+from state import Argument
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-call_llm = call_huggingface_llm  # Use HuggingFace model for LLM calls
 
 
-# State Definition
-@dataclass
-class Argument:
-    """Represents an argument with its content, type, and validity score"""
-
-    content: str
-    argument_type: str  # "support" or "attack"
-    validity_score: Optional[float] = None
-    parent_option: Optional[str] = None
-
-
-class GraphState(TypedDict):
-    """State schema for the LangGraph workflow"""
-
-    patient_info: str
-    handling_options: List[str]
-    arguments: List[Argument]
-    validated_arguments: List[Argument]
-    revised_care_plan: Dict[str, any]
-    human_feedback: Optional[str]
-    current_step: str
-    human_review_complete: bool  # Added for Gradio integration
-    user_action: Optional[str]  # Added for storing user's choice
-
-
-# Node Functions
-def care_plan_generator(state: GraphState) -> GraphState:
-    """First LLM: Generate handling options based on patient information"""
-    prompt = f"""You are an expert geriatric care planner. Based on the following patient information, 
-    generate 1-3 specific handling options for their care plan in aging-in-place context.
-    
-    Patient Information:
-    {state['patient_info']}
-    
-    Please provide handling options in the following format:
-    Option 1: [Description]
-    Option 2: [Description]
-    ...
-    
-    Focus on practical, implementable options that support independent living while ensuring safety and quality of life."""
-
-    response = call_llm(prompt, temperature=0.6, max_tokens=1024)
-
-    # Parse handling options
-    options = []
-    for line in response.split("\n"):
-        if line.strip().startswith("Option"):
-            option_text = line.split(":", 1)[1].strip() if ":" in line else line
-            if option_text:
-                options.append(option_text)
-
-    # Ensure we have at least one option
-    if not options:
-        print("Warning: No options parsed from LLM response. Using default options.")
-        options = [
-            "Home Safety Assessment and Modification",
-            "Social Engagement and Support Groups",
-            "Regular Health Monitoring and Care Coordination",
-        ]
-
-    state["handling_options"] = options
-    state["current_step"] = "argument_generation"
-    print("Options generated: ", options)
-    return state
-
-
-def argument_generator(state: GraphState) -> GraphState:
-    """Second LLM: Generate support and attack arguments for each handling option"""
-    arguments = []
-
-    print(f"Generating arguments for options: {state['handling_options']}")
-
-    for option in state["handling_options"]:
-        # Generate supporting arguments
-        support_prompt = f"""Generate 2 strong supporting arguments for the following elderly care handling option:
-        
-        Option: {option}
-        
-        Provide arguments that highlight benefits, feasibility, and positive outcomes.
-        Format each argument on a new line starting with "Support:"."""
-
-        support_response = call_llm(support_prompt, temperature=0.8)
-
-        # Generate attacking arguments
-        attack_prompt = f"""Generate 2 critical arguments against the following elderly care handling option:
-        
-        Option: {option}
-        
-        Provide arguments that highlight potential risks, challenges, or limitations.
-        Format each argument on a new line starting with "Attack:"."""
-
-        attack_response = call_llm(attack_prompt, temperature=0.8)
-
-        # Parse arguments
-        for line in support_response.split("\n"):
-            if line.strip().startswith("Support:"):
-                arg_content = line.replace("Support:", "").strip()
-                if arg_content:
-                    arguments.append(
-                        Argument(
-                            content=arg_content,
-                            argument_type="support",
-                            parent_option=option,  # This should match exactly
-                        )
-                    )
-
-        for line in attack_response.split("\n"):
-            if line.strip().startswith("Attack:"):
-                arg_content = line.replace("Attack:", "").strip()
-                if arg_content:
-                    arguments.append(
-                        Argument(
-                            content=arg_content,
-                            argument_type="attack",
-                            parent_option=option,  # This should match exactly
-                        )
-                    )
-
-    print(f"Generated {len(arguments)} arguments")
-    state["arguments"] = arguments
-    state["current_step"] = "human_review"
-    # Don't override human_review_complete if it's already set
-    if "human_review_complete" not in state:
-        state["human_review_complete"] = False
-    return state
-
-
-def human_review(state: GraphState) -> GraphState:
-    """Human-in-the-loop: Placeholder for Gradio interface"""
-    # This node doesn't modify the state
-    # The actual review happens in the Gradio interface
-    return state
-
-
-# Gradio Interface Manager
 class CarePlanGradioInterface:
     def __init__(self):
         self.graph = None
@@ -469,18 +330,18 @@ class CarePlanGradioInterface:
                             )
                             # Format final results
                             results = f"""
-## Final Care Plan
+                            ## Final Care Plan
 
-**Decision Confidence:** {final_state['revised_care_plan']['decision_confidence']}
+                            **Decision Confidence:** {final_state['revised_care_plan']['decision_confidence']}
 
-**Argument Summary:**
-- Total Arguments: {final_state['revised_care_plan']['argument_summary']['total_arguments']}
-- Supporting: {final_state['revised_care_plan']['argument_summary']['support_arguments']}
-- Challenging: {final_state['revised_care_plan']['argument_summary']['attack_arguments']}
-- Average Validity: {final_state['revised_care_plan']['argument_summary']['avg_validity']:.2f}
+                            **Argument Summary:**
+                            - Total Arguments: {final_state['revised_care_plan']['argument_summary']['total_arguments']}
+                            - Supporting: {final_state['revised_care_plan']['argument_summary']['support_arguments']}
+                            - Challenging: {final_state['revised_care_plan']['argument_summary']['attack_arguments']}
+                            - Average Validity: {final_state['revised_care_plan']['argument_summary']['avg_validity']:.2f}
 
-**Recommendations:**
-{final_state['revised_care_plan']['recommendations']}
+                            **Recommendations:**
+                            {final_state['revised_care_plan']['recommendations']}
                             """
                             history.append((None, "✅ Care plan generation complete!"))
                             return history, gr.update(visible=True, value=results)
@@ -530,7 +391,7 @@ class CarePlanGradioInterface:
 
             with gr.Tab("📋 Example Patients"):
                 gr.Markdown(
-                    """
+                """
                 ### Example Patient Cases
                 
                 **Case 1: Mrs. Johnson**
@@ -560,7 +421,7 @@ class CarePlanGradioInterface:
 
             with gr.Tab("ℹ️ How to Use"):
                 gr.Markdown(
-                    """
+                """
                 ## How to Use This System
                 
                 ### Step 1: Enter Patient Information
@@ -608,258 +469,6 @@ class CarePlanGradioInterface:
         if not self.interface:
             self.create_interface()
         self.interface.launch(share=share)
-
-
-def argument_validator(state: GraphState) -> GraphState:
-    """Third LLM: Evaluate validity and relevance of arguments"""
-    validated_arguments = []
-
-    for arg in state["arguments"]:
-        prompt = f"""You are an expert analyst evaluating the validity and relevance of arguments 
-        for elderly care planning.
-        
-        Handling Option: {arg.parent_option}
-        
-        Argument ({arg.argument_type}): {arg.content}
-        
-        Please evaluate this argument based on:
-        1. Factual accuracy
-        2. Relevance to elderly care and aging-in-place
-        3. Practical considerations
-        4. Evidence-based reasoning
-        
-        Provide a validity score between 0 and 1, where:
-        - 0 = completely invalid/irrelevant
-        - 0.5 = moderately valid
-        - 1 = highly valid and relevant
-        
-        Response format: "Validity Score: X.XX"
-        Include a brief explanation."""
-
-        response = call_llm(prompt, temperature=0.3, max_tokens=256)
-
-        # Extract validity score
-        validity_score = 0.5  # default
-        try:
-            if "Validity Score:" in response:
-                score_text = response.split("Validity Score:")[1].split()[0]
-                validity_score = float(score_text.strip())
-                validity_score = max(0, min(1, validity_score))  # Clamp to [0,1]
-        except:
-            pass
-
-        arg.validity_score = validity_score
-        validated_arguments.append(arg)
-
-    state["validated_arguments"] = validated_arguments
-    state["current_step"] = "plan_revision"
-    return state
-
-
-def care_plan_reviser(state: GraphState) -> GraphState:
-    """Fourth LLM: Revise care plan based on validated arguments"""
-    # Organize arguments by option and type
-    arguments_by_option = {}
-    for option in state["handling_options"]:
-        arguments_by_option[option] = {"support": [], "attack": []}
-
-    # Match arguments to options (handle potential mismatches)
-    for arg in state["validated_arguments"]:
-        matched = False
-        # First try exact match
-        if arg.parent_option in arguments_by_option:
-            arguments_by_option[arg.parent_option][arg.argument_type].append(arg)
-            matched = True
-        else:
-            # Try fuzzy matching if exact match fails
-            for option in state["handling_options"]:
-                # Check if the parent_option is a substring or vice versa
-                if (
-                    arg.parent_option in option
-                    or option in arg.parent_option
-                    or arg.parent_option.lower() in option.lower()
-                    or option.lower() in arg.parent_option.lower()
-                ):
-                    arguments_by_option[option][arg.argument_type].append(arg)
-                    matched = True
-                    print(f"Fuzzy matched '{arg.parent_option}' to '{option}'")
-                    break
-
-        if not matched:
-            print(
-                f"Warning: Could not match argument with parent_option '{arg.parent_option}' to any handling option"
-            )
-
-    # Create prompt with weighted arguments
-    prompt = f"""You are an expert geriatric care planner. Based on the validated arguments, 
-    create a comprehensive revised care plan for the elderly patient.
-    
-    Patient Information:
-    {state['patient_info']}
-    
-    Original Handling Options with Validated Arguments:
-    """
-
-    for option in state["handling_options"]:
-        prompt += f"\n\nOption: {option}"
-
-        # Add supporting arguments
-        support_args = arguments_by_option[option]["support"]
-        if support_args:
-            prompt += "\n  Supporting arguments:"
-            for arg in sorted(
-                support_args, key=lambda x: x.validity_score, reverse=True
-            ):
-                prompt += f"\n    - [{arg.validity_score:.2f}] {arg.content}"
-
-        # Add attacking arguments
-        attack_args = arguments_by_option[option]["attack"]
-        if attack_args:
-            prompt += "\n  Attacking arguments (Concerns/Challenges):"
-            for arg in sorted(
-                attack_args, key=lambda x: x.validity_score, reverse=True
-            ):
-                prompt += f"\n    - [{arg.validity_score:.2f}] {arg.content}"
-
-    prompt += """
-    Based on the arguments and their validity scores, provide:
-    1. A prioritized list of recommended handling options
-    2. Specific implementation steps for each recommended option
-    3. Risk mitigation strategies for identified concerns
-    4. A faithful explanation of why certain options are prioritized
-    
-    Consider the strength of arguments (validity scores) in your recommendations."""
-
-    response = call_llm(prompt, temperature=0.6, max_tokens=1536)
-
-    # Calculate decision confidence based on argument strengths
-    decision_confidence = calculate_decision_confidence(state["validated_arguments"])
-
-    state["revised_care_plan"] = {
-        "recommendations": response,
-        "decision_confidence": decision_confidence,
-        "argument_summary": summarize_arguments(state["validated_arguments"]),
-    }
-
-    print(f"Care plan revised. Decision confidence: {decision_confidence}")
-    return state
-
-
-# Helper Functions
-def calculate_decision_confidence(arguments: List[Argument]) -> float:
-    """Calculate overall confidence based on argument validity scores"""
-    if not arguments:
-        return 0.5
-
-    support_scores = [
-        arg.validity_score for arg in arguments if arg.argument_type == "support"
-    ]
-    attack_scores = [
-        arg.validity_score for arg in arguments if arg.argument_type == "attack"
-    ]
-
-    avg_support = sum(support_scores) / len(support_scores) if support_scores else 0.5
-    avg_attack = sum(attack_scores) / len(attack_scores) if attack_scores else 0.5
-
-    # Higher support and lower attack scores increase confidence
-    confidence = (avg_support + (1 - avg_attack)) / 2
-    return round(confidence, 2)
-
-
-def summarize_arguments(arguments: List[Argument]) -> Dict:
-    """Summarize argument statistics"""
-    summary = {
-        "total_arguments": len(arguments),
-        "support_arguments": len(
-            [a for a in arguments if a.argument_type == "support"]
-        ),
-        "attack_arguments": len([a for a in arguments if a.argument_type == "attack"]),
-        "avg_validity": (
-            sum(a.validity_score for a in arguments) / len(arguments)
-            if arguments
-            else 0
-        ),
-    }
-    return summary
-
-
-# Define routing logic - FIXED VERSION
-def route_after_human_review(state: GraphState) -> str:
-    """Route based on whether human review is complete"""
-    if state.get("human_review_complete", False):
-        return "argument_validation"
-    else:
-        return "human_review"
-
-
-# Build the graph
-def create_care_plan_graph():
-    """Create and configure the LangGraph workflow"""
-    workflow = StateGraph(GraphState)
-
-    # Add nodes
-    workflow.add_node("care_plan_generation", care_plan_generator)
-    workflow.add_node("argument_generation", argument_generator)
-    workflow.add_node("human_review", human_review)
-    workflow.add_node("argument_validation", argument_validator)
-    workflow.add_node("plan_revision", care_plan_reviser)
-
-    # Add edges
-    workflow.set_entry_point("care_plan_generation")
-    workflow.add_edge("care_plan_generation", "argument_generation")
-    workflow.add_edge("argument_generation", "human_review")
-
-    # Conditional edge for human review
-    workflow.add_conditional_edges(
-        "human_review",
-        route_after_human_review,
-        {"human_review": "human_review", "argument_validation": "argument_validation"},
-    )
-
-    workflow.add_edge("argument_validation", "plan_revision")
-    workflow.add_edge("plan_revision", END)
-
-    # Compile with memory for checkpointing
-    memory = MemorySaver()
-    graph = workflow.compile(checkpointer=memory)
-    return graph
-
-
-# Main execution functions
-def generate_elderly_care_plan_terminal(patient_info: str):
-    """Terminal-based function to generate an argumentative care plan"""
-    # Initialize the graph
-    graph = create_care_plan_graph()
-
-    # Initial state
-    initial_state = {
-        "patient_info": patient_info,
-        "handling_options": [],
-        "arguments": [],
-        "validated_arguments": [],
-        "revised_care_plan": {},
-        "human_feedback": None,
-        "current_step": "care_plan_generation",
-        "human_review_complete": True,  # Skip human review for terminal version
-        "user_action": None,
-    }
-
-    # Run the workflow
-    config = {
-        "configurable": {"thread_id": "care_plan_terminal"},
-        "recursion_limit": 1000,
-    }
-    final_state = graph.invoke(initial_state, config)
-
-    # Display results
-    print("\n=== FINAL CARE PLAN ===")
-    print(
-        f"\nDecision Confidence: {final_state['revised_care_plan']['decision_confidence']}"
-    )
-    print(f"\nArgument Summary: {final_state['revised_care_plan']['argument_summary']}")
-    print(f"\nRecommendations:\n{final_state['revised_care_plan']['recommendations']}")
-
-    return final_state
 
 
 # Example usage

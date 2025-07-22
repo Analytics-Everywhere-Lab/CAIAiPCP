@@ -76,3 +76,5 @@ def call_huggingface_llm(
     except Exception as e:
         print(f"Error calling HuggingFace model: {e}")
         return ""
+
+call_llm = call_huggingface_llm  # Use HuggingFace model for LLM calls
