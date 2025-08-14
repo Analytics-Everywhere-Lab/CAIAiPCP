@@ -6,6 +6,7 @@ from node import (
     care_plan_generator,
     care_plan_reviser,
     human_review,
+    rag_retrieval,
     route_after_human_review,
 )
 from state import GraphState
@@ -16,6 +17,7 @@ def create_care_plan_graph():
     workflow = StateGraph(GraphState)
 
     # Add nodes
+    workflow.add_node("rag_retrieval", rag_retrieval)
     workflow.add_node("care_plan_generation", care_plan_generator)
     workflow.add_node("argument_generation", argument_generator)
     workflow.add_node("human_review", human_review)
@@ -23,7 +25,8 @@ def create_care_plan_graph():
     workflow.add_node("plan_revision", care_plan_reviser)
 
     # Add edges
-    workflow.set_entry_point("care_plan_generation")
+    workflow.set_entry_point("rag_retrieval")
+    workflow.add_edge("rag_retrieval", "care_plan_generation")
     workflow.add_edge("care_plan_generation", "argument_generation")
     workflow.add_edge("argument_generation", "human_review")
 
