@@ -1,9 +1,10 @@
 from typing import Dict, List, Set
 from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState
-from llm_caller import call_llm
+from llm_caller import call_llm, call_llm_stream
 from utils import calculate_decision_confidence
 import re
+
 
 def care_plan_generator(state: GraphState) -> GraphState:
     """First LLM: Generate handling options based on patient information"""
@@ -27,7 +28,15 @@ def care_plan_generator(state: GraphState) -> GraphState:
     
     Focus on practical, implementable options that support independent living while ensuring safety and quality of life."""
 
-    response = call_llm(prompt, temperature=0.6, max_tokens=1024)
+    # Stream the response for better UX
+    if state.get("enable_streaming", False):
+        response_chunks = []
+        for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=1024):
+            response_chunks.append(chunk)
+            state["options_generation_progress"] = "".join(response_chunks)
+        response = "".join(response_chunks)
+    else:
+        response = call_llm(prompt, temperature=0.6, max_tokens=1024)
 
     # Parse handling options
     options = []
@@ -59,28 +68,42 @@ def argument_generator(state: GraphState) -> GraphState:
 
     print(f"Generating arguments for options: {state['handling_options']}")
 
-    for option in state["handling_options"]:
+    for i, option in enumerate(state["handling_options"]):
+        if state.get("enable_streaming", False):
+            state["argument_generation_progress"] = (
+                f"Generating arguments for option {i+1}/{len(state['handling_options'])}: {option[:50]}..."
+            )
+
         # Generate supporting arguments
-        support_prompt = f"""Generate 2 strong supporting arguments for the following elderly care handling option:
-        
-        {rag_context}
+        support_prompt = f"""
+            Generate 2 strong supporting arguments for the following elderly care handling option:
+            {rag_context}
+            Option: {option}
+            Provide arguments that highlight benefits, feasibility, and positive outcomes.
+            Format each argument on a new line starting with "Support:"."""
 
-        Option: {option}
-        
-        Provide arguments that highlight benefits, feasibility, and positive outcomes.
-        Format each argument on a new line starting with "Support:"."""
-
-        support_response = call_llm(support_prompt, temperature=0.8)
+        if state.get("enable_streaming", False):
+            support_response = ""
+            for chunk in call_llm_stream(support_prompt, temperature=0.8):
+                support_response += chunk
+                state["current_argument_stream"] = support_response
+        else:
+            support_response = call_llm(support_prompt, temperature=0.8)
 
         # Generate attacking arguments
-        attack_prompt = f"""Generate 2 critical arguments against the following elderly care handling option:
-        
-        Option: {option}
-        
-        Provide arguments that highlight potential risks, challenges, or limitations.
-        Format each argument on a new line starting with "Attack:"."""
+        attack_prompt = f"""
+            Generate 2 critical arguments against the following elderly care handling option:
+            Option: {option}        
+            Provide arguments that highlight potential risks, challenges, or limitations.
+            Format each argument on a new line starting with "Attack:"."""
 
-        attack_response = call_llm(attack_prompt, temperature=0.8)
+        if state.get("enable_streaming", False):
+            attack_response = ""
+            for chunk in call_llm_stream(attack_prompt, temperature=0.8):
+                attack_response += chunk
+                state["current_argument_stream"] = attack_response
+        else:
+            attack_response = call_llm(attack_prompt, temperature=0.8)
 
         # Parse arguments
         for line in support_response.split("\n"):
@@ -130,31 +153,43 @@ def argument_validator(state: GraphState) -> GraphState:
 
     # Track which arguments needed additional evidence
     arguments_with_additional_evidence = []
+    total_args = len(state["arguments"])
 
-    for arg in state["arguments"]:
+    for i, arg in enumerate(state["arguments"]):
+        if state.get("enable_streaming", False):
+            state["validation_progress"] = f"Validating argument {i+1}/{total_args}"
         # First validation pass
-        initial_prompt = f"""You are an expert analyst evaluating the validity and relevance of arguments 
-        for elderly care planning.
-        
-        Handling Option: {arg.parent_option}
-        
-        Argument ({arg.argument_type}): {arg.content}
-        
-        Please evaluate this argument based on:
-        1. Factual accuracy
-        2. Relevance to elderly care and aging-in-place
-        3. Practical considerations
-        4. Evidence-based reasoning
-        
-        Provide a validity score between 0 and 1, where:
-        - 0 = completely invalid/irrelevant
-        - 0.5 = moderately valid
-        - 1 = highly valid and relevant
-        
-        Response format: "Validity Score: X.XX"
-        Include a brief explanation."""
+        initial_prompt = f"""
+            You are an expert analyst evaluating the validity and relevance of arguments 
+            for elderly care planning.
+            
+            Handling Option: {arg.parent_option}
+            
+            Argument ({arg.argument_type}): {arg.content}
+            
+            Please evaluate this argument based on:
+            1. Factual accuracy
+            2. Relevance to elderly care and aging-in-place
+            3. Practical considerations
+            4. Evidence-based reasoning
+            
+            Provide a validity score between 0 and 1, where:
+            - 0 = completely invalid/irrelevant
+            - 0.5 = moderately valid
+            - 1 = highly valid and relevant
+            
+            Response format: "Validity Score: X.XX"
+            Include a brief explanation."""
 
-        initial_response = call_llm(initial_prompt, temperature=0.3, max_tokens=256)
+        if state.get("enable_streaming", False):
+            initial_response = ""
+            for chunk in call_llm_stream(
+                initial_prompt, temperature=0.3, max_tokens=256
+            ):
+                initial_response += chunk
+                state["current_validation_stream"] = initial_response
+        else:
+            initial_response = call_llm(initial_prompt, temperature=0.3, max_tokens=256)
 
         # Extract initial validity score
         initial_validity_score = 0.5  # default
@@ -173,18 +208,23 @@ def argument_validator(state: GraphState) -> GraphState:
             )
 
             # Generate intelligent search query for this specific argument
-            search_query_prompt = f"""Generate a specific medical search query to find evidence 
-            about this elderly care argument:
-            
-            Option: {arg.parent_option}
-            Argument Type: {arg.argument_type}
-            Argument: {arg.content}
-            
-            Create ONE focused search query that would help validate or refute this argument:"""
+            search_query_prompt = f"""
+                Generate a specific medical search query to find evidence about this elderly care argument:
+                Option: {arg.parent_option}
+                Argument Type: {arg.argument_type}
+                Argument: {arg.content}       
+                Create ONE focused search query that would help validate or refute this argument:"""
 
-            search_query = call_llm(
-                search_query_prompt, temperature=0.2, max_tokens=50
-            ).strip()
+            if state.get("enable_streaming", False):
+                search_query = ""
+                for chunk in call_llm_stream(
+                    search_query_prompt, temperature=0.2, max_tokens=50
+                ):
+                    search_query += chunk
+            else:
+                search_query = call_llm(
+                    search_query_prompt, temperature=0.2, max_tokens=50
+                ).strip()
 
             # Retrieve additional evidence
             additional_docs = vector_db.search(search_query, n_results=3)
@@ -192,22 +232,26 @@ def argument_validator(state: GraphState) -> GraphState:
             if additional_docs:
                 # Track which documents were used for this argument
                 doc_refs_used = []
-                
+
                 # Format additional evidence
                 additional_context = "\nADDITIONAL MEDICAL EVIDENCE:\n"
                 for i, doc in enumerate(additional_docs, 1):
-                    additional_context += f"\n[Evidence {i}] (Relevance: {doc['similarity_score']:.2f})\n"
+                    additional_context += (
+                        f"\n[Evidence {i}] (Relevance: {doc['similarity_score']:.2f})\n"
+                    )
                     additional_context += f"{doc['document'][:500]}...\n"
-                    
+
                     # Track this document usage
-                    if 'document_references' in state:
+                    if "document_references" in state:
                         # Find matching reference
-                        for ref in state['document_references']:
-                            if ref['full_content'] == doc['document']:
-                                ref['used_in'].append(f'validation_{arg.content[:30]}...')
-                                doc_refs_used.append(ref['id'])
+                        for ref in state["document_references"]:
+                            if ref["full_content"] == doc["document"]:
+                                ref["used_in"].append(
+                                    f"validation_{arg.content[:30]}..."
+                                )
+                                doc_refs_used.append(ref["id"])
                                 break
-                
+
                 # Store which docs supported this argument
                 arg.supporting_docs = doc_refs_used
 
@@ -233,9 +277,11 @@ def argument_validator(state: GraphState) -> GraphState:
                 Response format: "Updated Validity Score: X.XX"
                 Explain how the evidence influenced your assessment."""
 
-                revalidation_response = call_llm(
+                revalidation_response = ""
+                for chunk in call_llm_stream(
                     revalidation_prompt, temperature=0.3, max_tokens=400
-                )
+                ):
+                    revalidation_response += chunk
 
                 # Extract updated validity score
                 updated_validity_score = initial_validity_score  # fallback to initial
@@ -303,9 +349,11 @@ def argument_validator(state: GraphState) -> GraphState:
                 Does this evidence support the high validity score? 
                 Response: "Confirmed Score: X.XX" (can be same or adjusted)"""
 
-                verification_response = call_llm(
+                verification_response = ""
+                for chunk in call_llm_stream(
                     verification_prompt, temperature=0.2, max_tokens=100
-                )
+                ):
+                    verification_response += chunk
 
                 # Extract confirmed score
                 confirmed_score = initial_validity_score
@@ -434,25 +482,23 @@ def care_plan_reviser(state: GraphState) -> GraphState:
                 prompt += f"\n    - [{arg.validity_score:.2f}] {arg.content}"
 
     prompt += """
-    
-    Based on the arguments, their validity scores, and the medical knowledge provided, provide:
-    1. A prioritized list of recommended handling options
-    2. Specific implementation steps for each recommended option
-    3. Risk mitigation strategies for identified concerns
-    4. Evidence-based justification with references to medical knowledge using [REF-X] format
-    
-    IMPORTANT: Cite relevant medical knowledge using [REF-X] where X is the reference number.
-    Consider the strength of arguments (validity scores) in your recommendations."""
+        Based on the arguments, their validity scores, and the medical knowledge provided, provide:
+        1. A prioritized list of recommended handling options
+        2. Specific implementation steps for each recommended option
+        3. Risk mitigation strategies for identified concerns
+        4. Evidence-based justification with references to medical knowledge using [REF-X] format
+        
+        IMPORTANT: Cite relevant medical knowledge using [REF-X] where X is the reference number.
+        Consider the strength of arguments (validity scores) in your recommendations."""
 
-    if state.get('enable_streaming', False):
+    if state.get("enable_streaming", False):
         response_chunks = []
         for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=1536):
             response_chunks.append(chunk)
-            # Store partial response in state for UI updates
-            state['streaming_chunk'] = chunk
-            state['partial_response'] = ''.join(response_chunks)
-        
-        response = ''.join(response_chunks)
+            state["streaming_chunk"] = chunk
+            state["partial_response"] = "".join(response_chunks)
+
+        response = "".join(response_chunks)
     else:
         response = call_llm(prompt, temperature=0.6, max_tokens=1536)
 
@@ -562,9 +608,15 @@ def rag_retrieval(state: GraphState) -> GraphState:
     
     Format: One query per line"""
 
-    queries = (
-        call_llm(query_prompt, temperature=0.7, max_tokens=512).strip().split("\n")
-    )
+    if state.get("enable_streaming", False):
+        queries_text = ""
+        for chunk in call_llm_stream(query_prompt, temperature=0.3):
+            queries_text += chunk
+            state["rag_progress"] = f"Generating search queries:\n{queries_text}"
+        queries = queries_text.strip().split("\n")
+    else:
+        queries = call_llm(query_prompt, temperature=0.3).strip().split("\n")
+
     state["search_queries"] = queries
 
     all_documents = []
