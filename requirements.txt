@@ -1,4 +1,9 @@
-gradio
-langgraph
-torch
-transformers
+chromadb==1.0.19
+datasets==4.0.0
+gradio==5.42.0
+langgraph==0.6.5
+requests==2.32.4
+sentence_transformers==5.1.0
+torch==2.7.1
+tqdm==4.67.1
+transformers==4.53.2
