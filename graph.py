@@ -3,6 +3,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from node import (
     argument_generator,
     argument_validator,
+    multi_agent_argument_generator,
     care_plan_generator,
     care_plan_reviser,
     human_review,
@@ -19,7 +20,7 @@ def create_care_plan_graph():
     # Add nodes
     workflow.add_node("rag_retrieval", rag_retrieval)
     workflow.add_node("care_plan_generation", care_plan_generator)
-    workflow.add_node("argument_generation", argument_generator)
+    workflow.add_node("argument_generation", multi_agent_argument_generator)
     workflow.add_node("human_review", human_review)
     workflow.add_node("argument_validation", argument_validator)
     workflow.add_node("plan_revision", care_plan_reviser)

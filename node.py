@@ -3,6 +3,12 @@ from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState
 from llm_caller import call_llm, call_llm_stream
 from utils import calculate_decision_confidence
+from agent_selection import (
+    get_agents_for_condition_llm,
+    explain_team_selection,
+    analyze_patient_needs,
+)
+from healthcare_agents import format_agent_argument_display
 import re
 
 
@@ -62,7 +68,7 @@ def care_plan_generator(state: GraphState) -> GraphState:
 
 
 def argument_generator(state: GraphState) -> GraphState:
-    """Second LLM: Generate support and attack arguments for each handling option"""
+    """Second LLM: Generate support and challenge arguments for each handling option"""
     arguments = []
     rag_context = state.get("rag_context", "")
 
@@ -95,7 +101,7 @@ def argument_generator(state: GraphState) -> GraphState:
             Generate 2 critical arguments against the following elderly care handling option:
             Option: {option}        
             Provide arguments that highlight potential risks, challenges, or limitations.
-            Format each argument on a new line starting with "Attack:"."""
+            Format each argument on a new line starting with "Challenge:"."""
 
         if state.get("enable_streaming", False):
             attack_response = ""
@@ -119,8 +125,8 @@ def argument_generator(state: GraphState) -> GraphState:
                     )
 
         for line in attack_response.split("\n"):
-            if line.strip().startswith("Attack:"):
-                arg_content = line.replace("Attack:", "").strip()
+            if line.strip().startswith("Challenge:"):
+                arg_content = line.replace("Challenge:", "").strip()
                 if arg_content:
                     arguments.append(
                         Argument(
@@ -136,6 +142,195 @@ def argument_generator(state: GraphState) -> GraphState:
     # Don't override human_review_complete if it's already set
     if "human_review_complete" not in state:
         state["human_review_complete"] = False
+    return state
+
+
+def multi_agent_argument_generator(state: GraphState) -> GraphState:
+    """
+    Enhanced multi-agent argument generation with LLM-based team selection
+    Replaces the original multi_agent_argument_generator function
+    """
+    arguments = []
+    rag_context = state.get("rag_context", "")
+    patient_info = state["patient_info"]
+
+    print(f"Generating arguments for options: {state['handling_options']}")
+    print("\n🤖 Using AI to analyze patient and select optimal healthcare team...")
+
+    # Check if user has specified custom team requirements
+    custom_requirements = state.get("custom_team_requirements", None)
+
+    # Use LLM to select the healthcare team
+    healthcare_team = get_agents_for_condition_llm(
+        patient_info=patient_info,
+        enable_streaming=state.get("enable_streaming", False),
+        custom_requirements=custom_requirements,
+    )
+
+    team_explanation = explain_team_selection(
+        patient_info=patient_info, selected_team=healthcare_team
+    )
+
+    state["team_selection_rationale"] = team_explanation
+
+    print(
+        f"\n✨ Healthcare team assembled: {[agent.name for agent in healthcare_team]}"
+    )
+    print(f"📝 Rationale: {team_explanation}\n")
+
+    # Store agent assignments for tracking
+    agent_arguments_tracking = {}
+
+    # Store patient analysis
+    if "patient_analysis" not in state:
+        state["patient_analysis"] = analyze_patient_needs(patient_info)
+
+    for i, option in enumerate(state["handling_options"]):
+        print(f"\nProcessing Option {i+1}: {option}")
+
+        if state.get("enable_streaming", False):
+            state["argument_generation_progress"] = (
+                f"Option {i+1}/{len(state['handling_options'])}: Gathering perspectives from {len(healthcare_team)} healthcare professionals..."
+            )
+
+        option_arguments = []
+
+        # Each agent provides their perspective
+        for agent_idx, agent in enumerate(healthcare_team):
+            if state.get("enable_streaming", False):
+                state["argument_generation_progress"] = (
+                    f"Option {i+1}: [{agent_idx}] {agent.name} ({agent.role.value}) is analyzing..."
+                )
+
+            # Agent-specific prompt for supporting   arguments
+            support_prompt = f"""{agent.get_perspective_prompt()}
+            
+                {rag_context}
+
+                Patient Information:
+                {patient_info}
+
+                Care Option Being Evaluated:
+                {option}
+
+                From your professional perspective as a {agent.role.value}, provide 1-2 supporting arguments for this care option.
+                Focus on aspects most relevant to your expertise: {', '.join(agent.expertise_areas[:3])}
+
+                Format each argument on a new line starting with "Support:"
+                Be specific about benefits from your professional viewpoint."""
+
+            if state.get("enable_streaming", False):
+                support_response = ""
+                for chunk in call_llm_stream(support_prompt, temperature=0.7):
+                    support_response += chunk
+                    state["current_argument_stream"] = (
+                        f"{agent.name}: {support_response}"
+                    )
+            else:
+                support_response = call_llm(support_prompt, temperature=0.7)
+
+            # Agent-specific prompt for challenging arguments
+            attack_prompt = f"""{agent.get_perspective_prompt()}
+            
+        Patient Information:
+        {patient_info}
+
+        Care Option Being Evaluated:
+        {option}
+
+        From your professional perspective as a {agent.role.value}, provide 1-2 concerns or challenges about this care option.
+        Focus on risks or limitations most relevant to your expertise: {', '.join(agent.focus_priorities[:3])}
+
+        Format each argument on a new line starting with "Challenge:"
+        Be specific about concerns from your professional viewpoint."""
+
+            if state.get("enable_streaming", False):
+                attack_response = ""
+                for chunk in call_llm_stream(attack_prompt, temperature=0.7):
+                    attack_response += chunk
+                    state["current_argument_stream"] = (
+                        f"{agent.name}: {attack_response}"
+                    )
+            else:
+                attack_response = call_llm(attack_prompt, temperature=0.7)
+
+            # Parse and tag arguments with agent information
+            for line in support_response.split("\n"):
+                if line.strip().startswith("Support:"):
+                    arg_content = line.replace("Support:", "").strip()
+                    if arg_content:
+                        tagged_content = f"[{agent.role.value}] {arg_content}"
+                        arg = Argument(
+                            content=tagged_content,
+                            argument_type="support",
+                            parent_option=option,
+                        )
+                        arg.agent_role = agent.role.value
+                        arg.agent_name = agent.name
+                        arguments.append(arg)
+                        option_arguments.append(arg)
+
+                        if agent.name not in agent_arguments_tracking:
+                            agent_arguments_tracking[agent.name] = []
+                        agent_arguments_tracking[agent.name].append(
+                            {
+                                "type": "support",
+                                "content": arg_content,
+                                "option": option,
+                            }
+                        )
+
+            for line in attack_response.split("\n"):
+                if line.strip().startswith("Challenge:") or line.strip().startswith(
+                    "Attack:"
+                ):
+                    arg_content = (
+                        line.replace("Challenge:", "").replace("Attack:", "").strip()
+                    )
+                    if arg_content:
+                        tagged_content = f"[{agent.role.value}] {arg_content}"
+                        arg = Argument(
+                            content=tagged_content,
+                            argument_type="attack",
+                            parent_option=option,
+                        )
+                        arg.agent_role = agent.role.value
+                        arg.agent_name = agent.name
+                        arguments.append(arg)
+                        option_arguments.append(arg)
+
+                        if agent.name not in agent_arguments_tracking:
+                            agent_arguments_tracking[agent.name] = []
+                        agent_arguments_tracking[agent.name].append(
+                            {"type": "attack", "content": arg_content, "option": option}
+                        )
+
+        print(
+            f"  Generated {len(option_arguments)} arguments from {len(healthcare_team)} agents"
+        )
+
+    # Store all the tracking information
+    state["agent_arguments_tracking"] = agent_arguments_tracking
+    state["healthcare_team"] = [
+        {
+            "name": agent.name,
+            "role": agent.role.value,
+            "expertise": agent.expertise_areas,
+        }
+        for agent in healthcare_team
+    ]
+
+    print(f"\nTotal arguments generated: {len(arguments)}")
+    print(f"Arguments by agent:")
+    for agent_name, agent_args in agent_arguments_tracking.items():
+        print(f"  {agent_name}: {len(agent_args)} arguments")
+
+    state["arguments"] = arguments
+    state["current_step"] = "human_review"
+
+    if "human_review_complete" not in state:
+        state["human_review_complete"] = False
+
     return state
 
 
@@ -433,7 +628,7 @@ def argument_validator(state: GraphState) -> GraphState:
 
 
 def care_plan_reviser(state: GraphState) -> GraphState:
-    """Fourth LLM: Revise care plan based on validated arguments with document references"""
+    """LLM: Revise care plan based on validated arguments with document references"""
 
     # Organize arguments by option and type
     arguments_by_option = {}
@@ -464,7 +659,7 @@ def care_plan_reviser(state: GraphState) -> GraphState:
 
         support_args = arguments_by_option[option]["support"]
         if support_args:
-            prompt += "\n  Supporting arguments:"
+            prompt += "\n  Support arguments:"
             for arg in sorted(
                 support_args, key=lambda x: x.validity_score, reverse=True
             ):
@@ -475,7 +670,7 @@ def care_plan_reviser(state: GraphState) -> GraphState:
 
         attack_args = arguments_by_option[option]["attack"]
         if attack_args:
-            prompt += "\n  Attacking arguments (Concerns/Challenges):"
+            prompt += "\n  Challenge arguments:"
             for arg in sorted(
                 attack_args, key=lambda x: x.validity_score, reverse=True
             ):
