@@ -790,27 +790,34 @@ def summarize_arguments(arguments: List[Argument]) -> Dict:
 def rag_retrieval(state: GraphState) -> GraphState:
     """Agentic RAG: Retrieve relevant documents using RAG"""
     vector_db = MedicalVectorDB()
-    query_prompt = f"""Based on this patient information, generate 3-5 specific search queries 
-    to retrieve relevant medical knowledge for care planning:
-    
-    Patient Info: {state['patient_info']}
-    
-    Generate queries about:
-    - Medical conditions mentioned
-    - Care strategies for specific symptoms
-    - Safety considerations for the patient's situation
-    - Treatment guidelines
-    
-    Format: One query per line"""
+    prompt = f"""Based on this ELDERLY patient information, generate 3-5 specific search queries 
+        to retrieve relevant medical knowledge for GERIATRIC care planning (patients age 65+ ONLY).
+
+        IMPORTANT: Add elderly-specific terms to EVERY query like:
+        - "elderly" or "geriatric" or "senior" or "older adult"
+        - OR specific ages: "age 70", "age 80", "over 65", etc.
+
+        Patient Info: {state['patient_info']}
+
+        Generate queries about:
+        - ELDERLY patients with similar conditions
+        - GERIATRIC care strategies for symptoms
+        - Safety for OLDER ADULTS (65+)
+        ...
+
+        Example queries:
+        - "elderly patient 75 years diabetes management"
+        - "geriatric fall prevention age 80+"
+        """
 
     if state.get("enable_streaming", False):
         queries_text = ""
-        for chunk in call_llm_stream(query_prompt, temperature=0.3):
+        for chunk in call_llm_stream(prompt, temperature=0.3):
             queries_text += chunk
             state["rag_progress"] = f"Generating search queries:\n{queries_text}"
         queries = queries_text.strip().split("\n")
     else:
-        queries = call_llm(query_prompt, temperature=0.3).strip().split("\n")
+        queries = call_llm(prompt, temperature=0.3).strip().split("\n")
 
     state["search_queries"] = queries
 
