@@ -48,7 +48,7 @@ pip install psycopg-binary
 ~~~
 python main.py
 ~~~
-
+- When the MCP server script is run, you should see something like this in your terminal:
 ![mcp](./images/mcp.png "mcp")
 
 
@@ -60,6 +60,7 @@ jupyter notebook
 ~~~
 - Note books will be located in `./src/jupyter
 
+![jupyter](./images/jupyter.png "jupyter")
 
 
 - If you want to run the unit tests
