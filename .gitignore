@@ -2,3 +2,4 @@ temp
 __pycache__/
 mcp/docker/data/
 **/.DS_Store
+.ipynb_checkpoints
