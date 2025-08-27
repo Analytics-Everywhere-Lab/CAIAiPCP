@@ -12,9 +12,19 @@ PG_VECTOR_DOCUMENT_COLLECTION_NAME=v_store
 OLLAMA_LLM_MODEL=qwen3:8b
 ~~~
 
+- Setting up postgres
+~~~
+<new terminal window>
+cd ./docker/
+docker-compose --profile server up
+~~~
+- This will populate the database (only happens once) and start up postres with pgvector
+
+
 
 - Run following commands to setup the conda environment with python 3.13.3
 ~~~
+<new terminal window>
 cd ./src
 conda create -n mcp-server python=3.13.3
 conda activate mcp-server
