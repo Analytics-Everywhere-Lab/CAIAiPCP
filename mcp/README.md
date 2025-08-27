@@ -8,7 +8,7 @@ They have been tested and validate on a Mac M2.
 - The file needs to be created, if it does not exist
 - Contents of the file is included below:
 ~~~
-LOG_SETTING_FILE=./settings/logging.conf
+LOG_SETTING_FILE=./logging.conf
 PSYCOPG_DB_CONN_STR=postgresql://aip_user:password123123!@localhost/aip_db
 PG_VECTOR_DOCUMENT_COLLECTION_NAME=v_store
 OLLAMA_LLM_MODEL=qwen3:8b
