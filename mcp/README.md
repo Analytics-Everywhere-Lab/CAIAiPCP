@@ -1,6 +1,8 @@
 # General Instructions
 
 The instructions assume that you are in the `<project root>/mcp` directory.
+They have been tested and validate on a Mac M2.
+
 
 - There is a `./src/.env` file that is required
 - The file needs to be created, if it does not exist
