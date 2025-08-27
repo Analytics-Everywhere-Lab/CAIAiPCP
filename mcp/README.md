@@ -21,7 +21,15 @@ cd ./docker/
 docker-compose --profile server up
 ~~~
 - This will populate the database (only happens once) and start up postres with pgvector
+- When the container is ready, you should see something like this in your terminal :
+
+![docker-compose](./images/docker-compose.png "docker-compose")
+
+
 - There is a `cli.sh` file in the `docker/util_scripts` directory that can be used to connect to the database using the command-line interface
+
+
+![psql-cli](./images/psql_cli.png "psql-cli")
 
 
 - Run following commands to setup the conda environment with python 3.13.3
