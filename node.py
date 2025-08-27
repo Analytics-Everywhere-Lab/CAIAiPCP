@@ -34,7 +34,6 @@ def care_plan_generator(state: GraphState) -> GraphState:
     
     Focus on practical, implementable options that support independent living while ensuring safety and quality of life."""
 
-    # Stream the response for better UX
     if state.get("enable_streaming", False):
         response_chunks = []
         for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=1024):
@@ -139,7 +138,7 @@ def argument_generator(state: GraphState) -> GraphState:
     print(f"Generated {len(arguments)} arguments")
     state["arguments"] = arguments
     state["current_step"] = "human_review"
-    # Don't override human_review_complete if it's already set
+
     if "human_review_complete" not in state:
         state["human_review_complete"] = False
     return state
@@ -184,11 +183,11 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
     agent_arguments_tracking = {}
 
     # Store patient analysis
-    if "patient_analysis" not in state:
+    if state["patient_analysis"] is None:
         state["patient_analysis"] = analyze_patient_needs(patient_info)
 
     for i, option in enumerate(state["handling_options"]):
-        print(f"\nProcessing Option {i+1}: {option}")
+        print(f"\nOption {i+1}: {option}")
 
         if state.get("enable_streaming", False):
             state["argument_generation_progress"] = (
@@ -234,17 +233,17 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
             # Agent-specific prompt for challenging arguments
             attack_prompt = f"""{agent.get_perspective_prompt()}
             
-        Patient Information:
-        {patient_info}
+                Patient Information:
+                {patient_info}
 
-        Care Option Being Evaluated:
-        {option}
+                Care Option Being Evaluated:
+                {option}
 
-        From your professional perspective as a {agent.role.value}, provide 1-2 concerns or challenges about this care option.
-        Focus on risks or limitations most relevant to your expertise: {', '.join(agent.focus_priorities[:3])}
+                From your professional perspective as a {agent.role.value}, provide 1-2 concerns or challenges about this care option.
+                Focus on risks or limitations most relevant to your expertise: {', '.join(agent.focus_priorities[:3])}
 
-        Format each argument on a new line starting with "Challenge:"
-        Be specific about concerns from your professional viewpoint."""
+                Format each argument on a new line starting with "Challenge:"
+                Be specific about concerns from your professional viewpoint."""
 
             if state.get("enable_streaming", False):
                 attack_response = ""
@@ -415,12 +414,12 @@ def argument_validator(state: GraphState) -> GraphState:
             if state.get("enable_streaming", False):
                 search_query = ""
                 for chunk in call_llm_stream(
-                    search_query_prompt, temperature=0.2, max_tokens=50
+                    search_query_prompt, temperature=0.2, max_tokens=128
                 ):
                     search_query += chunk
             else:
                 search_query = call_llm(
-                    search_query_prompt, temperature=0.2, max_tokens=50
+                    search_query_prompt, temperature=0.2, max_tokens=128
                 ).strip()
 
             # Retrieve additional evidence
@@ -476,7 +475,7 @@ def argument_validator(state: GraphState) -> GraphState:
 
                 revalidation_response = ""
                 for chunk in call_llm_stream(
-                    revalidation_prompt, temperature=0.3, max_tokens=400
+                    revalidation_prompt, temperature=0.3, max_tokens=512
                 ):
                     revalidation_response += chunk
 
@@ -548,7 +547,7 @@ def argument_validator(state: GraphState) -> GraphState:
 
                 verification_response = ""
                 for chunk in call_llm_stream(
-                    verification_prompt, temperature=0.2, max_tokens=100
+                    verification_prompt, temperature=0.2, max_tokens=128
                 ):
                     verification_response += chunk
 
@@ -594,7 +593,7 @@ def argument_validator(state: GraphState) -> GraphState:
         }
 
         # Store in state for transparency
-        if "adaptive_retrieval_summary" not in state:
+        if state["adaptive_retrieval_summary"] is None:
             state["adaptive_retrieval_summary"] = adaptive_retrieval_summary
 
         print(f"\nAdaptive Retrieval Summary:")
@@ -735,7 +734,7 @@ def care_plan_reviser(state: GraphState) -> GraphState:
 
 def _format_references(state: GraphState, cited_doc_ids: Set[int]) -> str:
     """Format document references for display"""
-    if not cited_doc_ids or "document_references" not in state:
+    if not cited_doc_ids or len(state["document_references"]) == 0:
         return "No external references cited."
 
     references_text = "DOCUMENT REFERENCES:\n\n"

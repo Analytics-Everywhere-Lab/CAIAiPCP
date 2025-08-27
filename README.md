@@ -31,3 +31,12 @@ python rag/indexer.py
 ```bash
 python main.py
 ```
+
+## References
+
+<https://github.com/anurag-mishra899/Multi-Agents-Appointment-Booking/blob/main/Back-End/tools/tools.py>
+
+## TODO
+
+- [ ] After human review, the status is not updated.
+- [ ] Streaming LLM is not real-time.

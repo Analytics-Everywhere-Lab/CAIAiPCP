@@ -161,7 +161,7 @@ def select_healthcare_team(
 
     try:
         # Get LLM response
-        response = call_llm(selection_prompt, temperature=0.4, max_tokens=1024)
+        response = call_llm(selection_prompt, temperature=0.4, max_tokens=512)
 
         # Extract JSON from response
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
@@ -382,7 +382,7 @@ def explain_team_selection(
         Keep it concise and focused on the value each professional brings."""
 
     try:
-        explanation = call_llm(explanation_prompt, temperature=0.5, max_tokens=256)
+        explanation = call_llm(explanation_prompt, temperature=0.5, max_tokens=128)
         return explanation.strip()
     except:
         return "This interdisciplinary team was selected to address the patient's complex medical, functional, and psychosocial needs through coordinated care."

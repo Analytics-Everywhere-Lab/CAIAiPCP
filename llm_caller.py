@@ -83,7 +83,6 @@ def call_huggingface_llm_stream(
 
         model_inputs = tokenizer([text], return_tensors="pt").to(DEVICE)
         
-        # Use TextIteratorStreamer for streaming
         from transformers import TextIteratorStreamer
         from threading import Thread
         
@@ -106,7 +105,6 @@ def call_huggingface_llm_stream(
         thread = Thread(target=model.generate, kwargs=generation_kwargs)
         thread.start()
         
-        # Yield tokens as they're generated
         for token in streamer:
             yield token
             

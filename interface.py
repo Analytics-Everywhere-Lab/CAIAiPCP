@@ -28,11 +28,53 @@ class CarePlanGradioInterface:
         self.review_complete = False
         self.interface = None
 
+    def _initial_state(self, patient_info):
+        return {
+            # Core patient and care planning data
+            "patient_info": patient_info,
+            "handling_options": [],
+            "arguments": [],
+            "validated_arguments": [],
+            "revised_care_plan": {},
+            # Human interaction and feedback
+            "human_feedback": None,
+            "current_step": "rag_retrieval",
+            "human_review_complete": False,
+            "user_action": None,
+            # RAG and document retrieval
+            "retrieved_documents": [],
+            "search_queries": [],
+            "rag_context": "",
+            "adaptive_retrieval_summary": None,
+            "document_references": [],
+            "cited_documents": set(),
+            # Multi-agent healthcare team management
+            "custom_team_requirements": None,
+            "team_selection_rationale": None,
+            "patient_analysis": None,
+            "healthcare_team": [],
+            "agent_arguments_tracking": {},
+            "team_selection_logs": None,
+            # Streaming and progress tracking
+            "enable_streaming": True,
+            "options_generation_progress": None,
+            "argument_generation_progress": None,
+            "current_argument_stream": None,
+            "validation_progress": None,
+            "current_validation_stream": None,
+            "streaming_chunk": None,
+            "partial_response": None,
+            "rag_progress": None,
+        }
+
     def format_arguments_display(self, state):
         """
         Enhanced display showing LLM's team selection reasoning
         """
-        display_text = "## 🏥 Multi-Agents Review Collaboration\n\n"
+        if not self._debug_state(state, "format_arguments_display"):
+            return "Error: Invalid state"
+
+        display_text = "## 🏥 Multi-Agents Collaboration\n\n"
 
         # Show the AI's reasoning for team selection
         if "team_selection_rationale" in state:
@@ -266,12 +308,12 @@ class CarePlanGradioInterface:
             )
 
         # Message 5: Adaptive retrieval details (if available, collapsible)
-        if "adaptive_retrieval_summary" in final_state:
+        if final_state["adaptive_retrieval_summary"] is not None:
             summary = final_state["adaptive_retrieval_summary"]
             adaptive_content = f"""**Adaptive Evidence Enhancement Results:**
-                        - Arguments Enhanced: {summary['arguments_enhanced']}
-                        - Average Score Improvement: {summary['average_score_improvement']:.3f}
-                        **Enhanced Arguments:**"""
+                - Arguments Enhanced: {summary['arguments_enhanced']}
+                - Average Score Improvement: {summary['average_score_improvement']:.3f}
+                **Enhanced Arguments:**"""
 
             for detail in summary.get("details", []):
                 adaptive_content += f"\n\n**Argument:** {detail['argument'][:100]}..."
@@ -301,6 +343,9 @@ class CarePlanGradioInterface:
 
     def process_user_input_msg(self, message):
         """Message-format handler used by the Chatbot events"""
+        if not self._debug_state(self.current_state, "process_user_input_msg"):
+            return {"role": "assistant", "content": "Error: Invalid state"}
+
         if not self.current_state:
             return {
                 "role": "assistant",
@@ -368,192 +413,12 @@ class CarePlanGradioInterface:
             "content": "Invalid command. Please use 'accept', 'remove [index]', or 'add [support/challenge] [option] [text]'",
         }
 
-    def respond(self, message, chat_history, ref_data):
-        """Handle chat responses in message format"""
-        chat_history.append({"role": "user", "content": message})
-
-        if not self.review_complete:
-            response = self.process_user_input_msg(message)
-            chat_history.append(response)
-
-            if self.review_complete:
-                for updated_history, updated_refs in self.continue_after_review(
-                    chat_history
-                ):
-                    yield "", updated_history, updated_refs
-                return
-        else:
-            response_content = "The care plan is complete. You can review the collapsible sections above for detailed evidence and citations."
-            chat_history.append({"role": "assistant", "content": response_content})
-
-        yield "", chat_history, ref_data
-
-    def continue_after_review(self, history):
-        """Continue processing after human review is complete with streaming"""
-        if not self.review_complete or not self.current_state:
-            return history, {}
-
-        try:
-            continuation_thread_id = f"continue_{uuid4().hex}"
-            cfg = {"configurable": {"thread_id": continuation_thread_id}}
-
-            self.current_state["human_review_complete"] = True
-            self.current_state["current_step"] = "argument_validation"
-            self.current_state["enable_streaming"] = True
-
-            processing_msg_idx = len(history)
-            history.append(
-                {
-                    "role": "assistant",
-                    "content": "⏳ Validating arguments and generating final care plan...",
-                }
-            )
-
-            continuation_graph = create_care_plan_graph()
-
-            def stream_updates():
-                nonlocal history
-                final_state = None
-                current_node = None
-
-                node_messages = {
-                    "argument_validation": "🔍 Validating arguments with medical evidence...",
-                    "plan_revision": "📝 Generating personalized care plan recommendations...",
-                }
-
-                for event in continuation_graph.stream(self.current_state, cfg):
-                    for node_name, node_state in event.items():
-                        if node_name != current_node:
-                            current_node = node_name
-                            if node_name in node_messages:
-                                history[processing_msg_idx] = {
-                                    "role": "assistant",
-                                    "content": node_messages[node_name],
-                                }
-                                yield history, {}
-
-                        if node_name == "argument_validation":
-                            if "adaptive_retrieval_summary" in node_state:
-                                summary = node_state["adaptive_retrieval_summary"]
-                                progress_msg = "🔍 Validating arguments with medical evidence...\n\n"
-                                progress_msg += f"Enhanced {summary.get('arguments_enhanced', 0)} arguments with additional evidence"
-                                history[processing_msg_idx] = {
-                                    "role": "assistant",
-                                    "content": progress_msg,
-                                }
-                                yield history, {}
-
-                        elif node_name == "plan_revision":
-                            if (
-                                "streaming_chunk" in node_state
-                                and "partial_response" in node_state
-                            ):
-                                partial = node_state["partial_response"]
-                                streaming_msg = "## 📝 Generating Care Plan...\n\n"
-                                if len(partial) > 100:
-                                    if "1." in partial:
-                                        streaming_msg += (
-                                            "**Generating recommendations:**\n"
-                                        )
-                                    elif "Risk" in partial:
-                                        streaming_msg += (
-                                            "**Adding risk mitigation strategies:**\n"
-                                        )
-                                    elif "Implementation" in partial:
-                                        streaming_msg += (
-                                            "**Detailing implementation steps:**\n"
-                                        )
-                                    else:
-                                        streaming_msg += (
-                                            "**Processing care plan details:**\n"
-                                        )
-                                display_partial = (
-                                    partial[-500:] if len(partial) > 500 else partial
-                                )
-                                streaming_msg += (
-                                    f"\n{display_partial}\n\n*...generating...*"
-                                )
-                                history[processing_msg_idx] = {
-                                    "role": "assistant",
-                                    "content": streaming_msg,
-                                }
-                                yield history, {}
-                            final_state = node_state
-
-                if (
-                    final_state
-                    and "revised_care_plan" in final_state
-                    and final_state["revised_care_plan"]
-                ):
-                    history = history[:processing_msg_idx]
-                    history.append(
-                        {
-                            "role": "assistant",
-                            "content": "📕 Finalizing care plan with evidence citations...",
-                        }
-                    )
-                    yield history, {}
-                    history = history[:-1]
-
-                    care_plan_messages, ref_data = self.format_care_plan_for_chat(
-                        final_state
-                    )
-                    for msg in care_plan_messages:
-                        history.append(msg)
-                        yield history, ref_data
-                else:
-                    history[processing_msg_idx] = {
-                        "role": "assistant",
-                        "content": "❌ Error: Unable to generate final care plan. The planning process did not complete successfully.",
-                    }
-                    yield history, {}
-
-            return stream_updates()
-
-        except Exception as e:
-            if len(history) > 0 and history[-1]["role"] == "assistant":
-                history[-1] = {
-                    "role": "assistant",
-                    "content": f"❌ Error during care plan generation:\n\n{str(e)}\n\nPlease try again or contact support if the issue persists.",
-                }
-            else:
-                history.append(
-                    {
-                        "role": "assistant",
-                        "content": f"❌ Error during processing: {str(e)}",
-                    }
-                )
-            return history, {}
 
     def _reset_session(self):
         self.review_complete = False
         self.current_state = None
         self.current_thread_id = None
         self.graph = None
-
-    def _initial_state(self, patient_info):
-        return {
-            "patient_info": patient_info,
-            "custom_team_requirements": None,
-            "team_selection_rationale": None,
-            "patient_analysis": None,
-            "handling_options": [],
-            "arguments": [],
-            "validated_arguments": [],
-            "healthcare_team": [],
-            "revised_care_plan": {},
-            "agent_arguments_tracking": {},
-            "human_feedback": None,
-            "current_step": "rag_retrieval",
-            "human_review_complete": False,
-            "user_action": None,
-            "retrieved_documents": [],
-            "search_queries": [],
-            "rag_context": "",
-            "document_references": [],
-            "cited_documents": set(),
-            "enable_streaming": True,
-        }
 
     def _yield_ui(self, title, chat_history, msg_visible=True, refs=None):
         return (
@@ -653,7 +518,7 @@ class CarePlanGradioInterface:
                 "role": "assistant",
                 "content": f"✅ Generated {options_count} care plan options\n 💭 Generating arguments...",
             }
-            updates.append(self._yield_ui("## Generating Arguments", chat_history))
+            updates.append(self._yield_ui("## Generating Arguments...", chat_history))
             node_state["_options_done"] = True
         return updates, chat_history
 
@@ -671,7 +536,7 @@ class CarePlanGradioInterface:
                 "role": "assistant",
                 "content": f"💭 Starting argument generation (0/{total_expected_args} arguments)...",
             }
-            updates.append(self._yield_ui("## Generating Arguments", chat_history))
+            updates.append(self._yield_ui("## Generating Arguments...", chat_history))
             node_state["_args_started"] = True
 
         if "argument_generation_progress" in node_state:
@@ -693,7 +558,7 @@ class CarePlanGradioInterface:
                 "role": "assistant",
                 "content": f"💭 {progress_msg}",
             }
-            updates.append(self._yield_ui("## Generating Arguments", chat_history))
+            updates.append(self._yield_ui("## Generating Arguments...", chat_history))
         elif "arguments" in node_state and current_args > 0:
             support_count = sum(
                 1 for a in node_state["arguments"] if a.argument_type == "support"
@@ -705,7 +570,7 @@ class CarePlanGradioInterface:
                 "role": "assistant",
                 "content": f"💭 Generating arguments... [{current_args}/{total_expected_args}]\n\n🟢 Support: {support_count} | ⚠️ Challenge: {attack_count}",
             }
-            updates.append(self._yield_ui("## Generating Arguments", chat_history))
+            updates.append(self._yield_ui("## Generating Arguments...", chat_history))
 
         if (
             node_state.get("arguments")
@@ -723,7 +588,7 @@ class CarePlanGradioInterface:
                 "role": "assistant",
                 "content": f"✅ Generated {total_args} arguments: ({support_count} support, {attack_count} challenge)\n📋 Please review the arguments below:",
             }
-            updates.append(self._yield_ui("## Review Arguments", chat_history))
+            updates.append(self._yield_ui("## Review Arguments...", chat_history))
 
             # Team selection logs (collapsible)
             if node_state.get("team_selection_logs"):
@@ -773,7 +638,7 @@ class CarePlanGradioInterface:
                         },
                     }
                 )
-                updates.append(self._yield_ui("## Review Arguments", chat_history))
+                updates.append(self._yield_ui("## Review Arguments...", chat_history))
 
             node_state["_args_done"] = True
 
@@ -788,11 +653,20 @@ class CarePlanGradioInterface:
         review_message = self.format_arguments_display(self.current_state)
         chat_history.append({"role": "assistant", "content": review_message})
         return [
-            self._yield_ui("## Preparing Review", chat_history),
-            self._yield_ui("## Review Generated Arguments", chat_history),
+            self._yield_ui("## Preparing Review...", chat_history),
+            self._yield_ui("## Review Arguments...", chat_history),
         ], chat_history
 
-    # Public generator used by Gradio
+    def _debug_state(self, state, method_name):
+        """Debug helper to validate state structure"""
+        if state is None:
+            print(f"ERROR in {method_name}: state is None!")
+            return False
+        if not isinstance(state, dict):
+            print(f"ERROR in {method_name}: state is not a dict, it's {type(state)}")
+            return False
+        return True
+
     def stream_initial_generation(self, patient_info):
         chat_history = []
         try:
@@ -809,7 +683,7 @@ class CarePlanGradioInterface:
                     "content": "🤖 Starting care plan generation...\n📚 Retrieving relevant medical knowledge from database...",
                 }
             )
-            yield self._yield_ui("## Generating Care Plan", chat_history)
+            yield self._yield_ui("## Generating Care Plan...", chat_history)
 
             reached_human_review = False
             current_message_idx = len(chat_history) - 1
@@ -896,6 +770,178 @@ class CarePlanGradioInterface:
         # Reset and start a new session
         self._reset_session()
         yield from self.stream_initial_generation(patient_info)
+    
+    def respond(self, message, chat_history, ref_data):
+        """Handle chat responses in message format"""
+        chat_history.append({"role": "user", "content": message})
+
+        if not self.review_complete:
+            response = self.process_user_input_msg(message)
+            chat_history.append(response)
+
+            if self.review_complete:
+                for updated_history, updated_refs in self.continue_after_review(
+                    chat_history
+                ):
+                    # During processing after acceptance: hide the input
+                    yield self._yield_ui(
+                        "## Validating Arguments and Finalizing Care Plan...",
+                        updated_history,
+                        msg_visible=False,
+                        refs=updated_refs,
+                    )
+                return
+        else:
+            response_content = "The care plan is complete. You can review the collapsible sections above for detailed evidence and citations."
+            chat_history.append({"role": "assistant", "content": response_content})
+
+        yield self._yield_ui(
+            "## Finalized Care Plan",
+            chat_history,
+            msg_visible=True,
+            refs=ref_data,
+        )
+        return
+
+    def continue_after_review(self, history):
+        """Continue processing after human review is complete with streaming"""
+        # Always behave as a generator so the caller can `for ... in ...` safely
+        if not self.review_complete or not self.current_state:
+            yield history, {}
+            return
+
+        try:
+            continuation_thread_id = f"continue_{uuid4().hex}"
+            cfg = {"configurable": {"thread_id": continuation_thread_id}}
+
+            self.current_state["human_review_complete"] = True
+            self.current_state["current_step"] = "argument_validation"
+            self.current_state["enable_streaming"] = True
+
+            processing_msg_idx = len(history)
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": "⏳ Validating arguments and generating final care plan...",
+                }
+            )
+
+            yield history, {}
+
+            continuation_graph = create_care_plan_graph()
+
+            def stream_updates():
+                nonlocal history
+                final_state = None
+                current_node = None
+
+                node_messages = {
+                    "argument_validation": "🔍 Validating arguments with medical evidence...",
+                    "plan_revision": "📝 Generating personalized care plan recommendations...",
+                }
+
+                for event in continuation_graph.stream(self.current_state, cfg):
+                    for node_name, node_state in event.items():
+                        if node_name != current_node:
+                            current_node = node_name
+                            if node_name in node_messages:
+                                history[processing_msg_idx] = {
+                                    "role": "assistant",
+                                    "content": node_messages[node_name],
+                                }
+                                yield history, {}
+
+                        if node_name == "argument_validation":
+                            summary = node_state.get("adaptive_retrieval_summary")
+                            if summary is not None:
+                                progress_msg = "🔍 Validating arguments with medical evidence...\n\n"
+                                progress_msg += f"Enhanced {summary.get('arguments_enhanced', 0)} arguments with additional evidence"
+                                history[processing_msg_idx] = {
+                                    "role": "assistant",
+                                    "content": progress_msg,
+                                }
+                                yield history, {}
+
+                        elif node_name == "plan_revision":
+                            partial = node_state.get("partial_response")
+                            # Only show streaming progress if partial text exists
+                            if partial:
+                                streaming_msg = "## 📝 Generating Care Plan...\n\n"
+                                if len(partial) > 100:
+                                    if "1." in partial:
+                                        streaming_msg += (
+                                            "**Generating recommendations:**\n"
+                                        )
+                                    elif "Risk" in partial:
+                                        streaming_msg += (
+                                            "**Adding risk mitigation strategies:**\n"
+                                        )
+                                    elif "Implementation" in partial:
+                                        streaming_msg += (
+                                            "**Detailing implementation steps:**\n"
+                                        )
+                                    else:
+                                        streaming_msg += (
+                                            "**Processing care plan details:**\n"
+                                        )
+                                display_partial = (
+                                    partial[-500:] if len(partial) > 500 else partial
+                                )
+                                streaming_msg += (
+                                    f"\n{display_partial}\n\n*...generating...*"
+                                )
+                                history[processing_msg_idx] = {
+                                    "role": "assistant",
+                                    "content": streaming_msg,
+                                }
+                                yield history, {}
+                            final_state = node_state
+
+                if final_state and final_state.get("revised_care_plan"):
+                    # Replace the progress message with a brief "finalizing" notice
+                    history = history[:processing_msg_idx]
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": "📕 Finalizing care plan with evidence citations...",
+                        }
+                    )
+                    yield history, {}
+                    # Remove the temporary "finalizing" message before pushing the final blocks
+                    history = history[:-1]
+
+                    care_plan_messages, ref_data = self.format_care_plan_for_chat(
+                        final_state
+                    )
+                    for msg in care_plan_messages:
+                        history.append(msg)
+                        yield history, ref_data
+                else:
+                    history[processing_msg_idx] = {
+                        "role": "assistant",
+                        "content": "❌ Error: Unable to generate final care plan. The planning process did not complete successfully.",
+                    }
+                    yield history, {}
+
+            # Return the inner generator (respond() already iterates it and yields 3 outputs)
+            yield from stream_updates()
+
+        except Exception as e:
+            # Emit the error as a streamed update (not a plain return tuple)
+            if len(history) > 0 and history[-1]["role"] == "assistant":
+                history[-1] = {
+                    "role": "assistant",
+                    "content": f"❌ Error during care plan generation:\n\n{str(e)}\n\nPlease try again or contact support if the issue persists.",
+                }
+            else:
+                history.append(
+                    {
+                        "role": "assistant",
+                        "content": f"❌ Error during processing: {str(e)}",
+                    }
+                )
+            yield history, {}
+            return
 
     def create_interface(self):
         """Create the Gradio interface"""
@@ -951,7 +997,7 @@ class CarePlanGradioInterface:
                 msg.submit(
                     self.respond,
                     inputs=[msg, chatbot, references_state],
-                    outputs=[msg, chatbot, references_state],
+                    outputs=[progress_display, chatbot, msg, references_state],
                 )
 
             with gr.Tab("📋 Example Patients"):
