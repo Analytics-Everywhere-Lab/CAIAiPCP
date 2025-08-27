@@ -3,8 +3,8 @@
 The instructions assume that you are in the `<project root>/mcp` directory.
 
 - There is a `./src/.env` file that is required
+- You need to create this file if it does not exist
 - Contents of the file is included below
-- You need to create this file
 ~~~
 LOG_SETTING_FILE=./settings/logging.conf
 PSYCOPG_DB_CONN_STR=postgresql://aip_user:password123123!@localhost/aip_db
