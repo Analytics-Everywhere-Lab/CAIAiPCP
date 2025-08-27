@@ -63,7 +63,8 @@ jupyter notebook
 ![jupyter](./images/jupyter.png "jupyter")
 
 
-- If you want to run the unit tests
+- If you want to run the unit tests,
+- Note that the MCP server and the pg-vector docker container must be running for the tests to pass
 ~~~
 <new terminal window>
 conda activate mcp-server
