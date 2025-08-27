@@ -27,7 +27,8 @@ docker-compose --profile server up
 
 
 - There is a `cli.sh` file in the `docker/util_scripts` directory that can be used to connect to the database using the command-line interface
-
+- Running the command-line interface is optional
+- When run, you can issue SQL queries interactively. When the `cli.sh` script is run, you should see something like this in your terminal:
 
 ![psql-cli](./images/psql_cli.png "psql-cli")
 
@@ -47,6 +48,8 @@ pip install psycopg-binary
 ~~~
 python main.py
 ~~~
+
+![mcp](./images/mcp.png "mcp")
 
 
 - If you want to test the mcp server with Jupyter

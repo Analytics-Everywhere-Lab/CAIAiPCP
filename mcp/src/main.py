@@ -1,6 +1,8 @@
 from mcp.server.fastmcp import FastMCP
 from util.async_db import execute_sql
 from typing import List
+from util import settings
+import logging
 
 
 # Create an MCP server
@@ -31,7 +33,11 @@ async def get_available_slots_by_provider(provider_name: str) -> List[dict]:
 
 
 if __name__ == "__main__":
+    config_json = settings.get_logging_config(settings.LOG_SETTING_FILE)
+    logging.config.dictConfig(config_json)
+    logging.info('Running application as main ...')
+
     mcp.settings.host = "0.0.0.0"
-    mcp.settings.port = "8000"
+    mcp.settings.port = 8000
     mcp.settings.stateless_http = True
     mcp.run(transport="sse")
