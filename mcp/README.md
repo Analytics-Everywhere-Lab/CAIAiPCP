@@ -71,6 +71,8 @@ conda activate mcp-server
 cd ./util_scripts
 sh run_unit_tests.sh
 ~~~
+- When running the unit tests, your terminal should look like this:
+![unittest](./images/unittest.png "unittest")
 
 
 - If you want to run the MCP inspector:
@@ -78,7 +80,11 @@ sh run_unit_tests.sh
 <new terminal window>
 conda activate mcp-server
 cd ./util_scripts
-sh starti_inpector.sh
+sh start_inpector.sh
 ~~~
+- The GUI for the inspector should look like this:
+![inspector](./images/inspector.png "inspector")
+- Note that the MCP server and the pg-vector docker container must be running in order to interact with the tools using the inspector
+
 
 - Note that the inspector needs `npm` and `nodejs`. These can be installed with brew.
