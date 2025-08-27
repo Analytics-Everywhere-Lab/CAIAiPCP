@@ -24,12 +24,30 @@ async def get_provider_roles() -> List[dict]:
     roles = [{"role": e["role"]} for e in res]
     return roles
 
+
 @mcp.tool()
 async def get_available_slots_by_provider(provider_name: str) -> List[dict]:
     """returns a list of available / open provider time slots"""
     res = await execute_sql("SELECT dt_time_slot FROM AVAILABILITY WHERE lower(provider_name) = %s and is_available = True", True, provider_name.lower())
     roles = [{"available_time_slot": e["dt_time_slot"]} for e in res]
     return roles
+
+
+@mcp.tool()
+async def book_slot_for_provider(provider_name: str, time_slot: str, client_id: str) -> int:
+    """books client appoinment with provider at specified time slot"""
+    affected = await execute_sql("""
+                            UPDATE availability 
+                            SET 
+                                patient_to_attend = %s, is_available = False 
+                            WHERE 
+                                dt_time_slot = TO_TIMESTAMP(%s, 'YYYY-MM-DD HH24:MI:SS')
+                            AND
+                                LOWER(provider_name) = %s
+                            """, False, client_id, time_slot, provider_name.lower())
+    print(f'Rows affected : {affected}')
+    return 1
+    # return affected
 
 
 if __name__ == "__main__":

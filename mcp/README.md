@@ -1,4 +1,14 @@
-# General Instructions
+# Purpose
+
+- MCP server used to share tools remotely
+- Available tools :
+   - get_provider_names - returns a list of available providers
+   - get_provider_roles - returns a list of available provider roles
+   - get_available_slots_by_provider - returns a list of available / open provider time slots
+   - book_slot_for_provider - books client appoinment with provider at specified time slot
+
+
+# General Setup and Usage Instructions
 
 The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.

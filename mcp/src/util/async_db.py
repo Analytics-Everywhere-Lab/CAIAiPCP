@@ -22,7 +22,7 @@ async def execute_sql(sql_str: str, fetch=False, *args):
                     dict((cursor.description[i][0], value) for i, value in enumerate(row)) for row in await cursor.fetchall()
             ]
         else:
-            result = await cursor.rowcount
+            res = cursor.rowcount
 
         await cursor.close()
         # commit the transaction
