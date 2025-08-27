@@ -1,3 +1,4 @@
+import re
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 from enum import Enum
@@ -163,22 +164,23 @@ def select_healthcare_team(
         response = call_llm(selection_prompt, temperature=0.4, max_tokens=1024)
 
         # Extract JSON from response
-        import re
-
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
 
         if json_match:
+            selection_logs = []
             selection_data = json.loads(json_match.group())
 
             # Extract selected roles
             selected_roles = []
             selected_agents = []
 
-            print("\n🤖 LLM Team Selection Reasoning:")
-            print(
+            selection_logs.append("\n🤖 LLM Team Selection Reasoning:")
+            selection_logs.append(
                 f"Strategy: {selection_data.get('overall_strategy', 'Not specified')}"
             )
-            print(f"Team size: {selection_data.get('team_size', 'Unknown')}")
+            selection_logs.append(
+                f"Team size: {selection_data.get('team_size', 'Unknown')}"
+            )
 
             for member in selection_data.get("selected_team", []):
                 role_name = member.get("role")
@@ -190,8 +192,10 @@ def select_healthcare_team(
                         if role_enum not in selected_roles:
                             selected_roles.append(role_enum)
                             selected_agents.append(agent)
-                            print(f"  ✓ {agent.name} ({role_enum.value})")
-                            print(f"    Reasoning: {reasoning}")
+                            selection_logs.append(
+                                f"  ✓ {agent.name} ({role_enum.value})"
+                            )
+                            selection_logs.append(f"    Reasoning: {reasoning}")
                         break
 
             # Add any forced inclusions not already selected
@@ -199,7 +203,7 @@ def select_healthcare_team(
                 for role in force_include:
                     if role not in selected_roles and role in HEALTHCARE_AGENTS:
                         selected_agents.append(HEALTHCARE_AGENTS[role])
-                        print(
+                        selection_logs.append(
                             f"  ✓ {HEALTHCARE_AGENTS[role].name} (Required inclusion)"
                         )
 
@@ -207,21 +211,23 @@ def select_healthcare_team(
             for core_role in TeamComposition.CORE_ROLES:
                 if core_role not in selected_roles and core_role in HEALTHCARE_AGENTS:
                     selected_agents.append(HEALTHCARE_AGENTS[core_role])
-                    print(f"  ✓ {HEALTHCARE_AGENTS[core_role].name} (Core team member)")
+                    selection_logs.append(
+                        f"  ✓ {HEALTHCARE_AGENTS[core_role].name} (Core team member)"
+                    )
 
             # Print collaboration notes if available
             if "key_collaborations" in selection_data:
-                print("\n🤝 Key Collaborations Needed:")
+                selection_logs.append("\n🤝 Key Collaborations Needed:")
                 for collab in selection_data["key_collaborations"]:
-                    print(f"  • {collab}")
+                    selection_logs.append(f"  • {collab}")
 
             # Print potential gaps
             if "potential_gaps" in selection_data:
-                print("\n⚠️ Potential Care Gaps to Monitor:")
+                selection_logs.append("\n⚠️ Potential Care Gaps to Monitor:")
                 for gap in selection_data["potential_gaps"]:
-                    print(f"  • {gap}")
+                    selection_logs.append(f"  • {gap}")
 
-            return selected_agents[:max_team_size]  # Respect max team size
+            return selected_agents[:max_team_size], selection_logs
 
     except Exception as e:
         print(f"Error in LLM team selection: {e}")
@@ -287,18 +293,18 @@ def get_agents_for_condition_llm(
     Returns:
         List of selected healthcare agents
     """
-
+    selection_logs = []
     if enable_streaming:
-        print("🔍 Analyzing patient needs...")
+        selection_logs.append("🔍 Analyzing patient needs...")
 
     # First, analyze the patient
     patient_analysis = analyze_patient_needs(patient_info)
 
     if enable_streaming:
-        print(
+        selection_logs.append(
             f"📊 Complexity level: {patient_analysis.get('complexity_level', 'Unknown')}"
         )
-        print(
+        selection_logs.append(
             f"🏥 Coordination needs: {patient_analysis.get('coordination_intensity', 'Unknown')}"
         )
 
@@ -330,10 +336,12 @@ def get_agents_for_condition_llm(
             )
 
     if enable_streaming:
-        print(f"🏥 Assembling healthcare team (max size: {max_team_size})...")
+        selection_logs.append(
+            f"🏥 Assembling healthcare team (max size: {max_team_size})..."
+        )
 
     # Select the team using LLM
-    selected_team = select_healthcare_team(
+    selected_team, team_selection_logs = select_healthcare_team(
         patient_info=patient_info,
         patient_analysis=patient_analysis,
         force_include=force_include,
@@ -341,9 +349,13 @@ def get_agents_for_condition_llm(
     )
 
     if enable_streaming:
-        print(f"✅ Team assembled with {len(selected_team)} healthcare professionals")
+        selection_logs.append(
+            f"✅ Team assembled with {len(selected_team)} healthcare professionals"
+        )
 
-    return selected_team
+    selection_logs.extend(team_selection_logs)
+
+    return selected_team, selection_logs
 
 
 def explain_team_selection(
@@ -374,29 +386,3 @@ def explain_team_selection(
         return explanation.strip()
     except:
         return "This interdisciplinary team was selected to address the patient's complex medical, functional, and psychosocial needs through coordinated care."
-
-
-if __name__ == "__main__":
-    # For testing
-    test_patients = [
-        """Mrs. Johnson, 82 years old, lives alone in a two-story house. She has mild cognitive 
-        impairment, arthritis in her knees, and recently had a minor fall. She is determined 
-        to remain in her home but her family is concerned about her safety. She has limited 
-        mobility on stairs and sometimes forgets to take her medications.""",
-    ]
-
-    for i, patient in enumerate(test_patients, 1):
-        print(f"\n{'='*60}")
-        print(f"TEST CASE {i}")
-        print(f"{'='*60}")
-
-        team = get_agents_for_condition_llm(patient, enable_streaming=True)
-
-        print(f"\nFinal team of {len(team)} members:")
-        for agent in team:
-            print(f"  • {agent.name} - {agent.role.value}")
-
-        # Get explanation
-        explanation = explain_team_selection(patient, team)
-        print(f"\nTeam Selection Rationale:")
-        print(explanation)

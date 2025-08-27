@@ -161,11 +161,13 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
     custom_requirements = state.get("custom_team_requirements", None)
 
     # Use LLM to select the healthcare team
-    healthcare_team = get_agents_for_condition_llm(
+    healthcare_team, team_selection_logs = get_agents_for_condition_llm(
         patient_info=patient_info,
         enable_streaming=state.get("enable_streaming", False),
         custom_requirements=custom_requirements,
     )
+
+    state["team_selection_logs"] = team_selection_logs
 
     team_explanation = explain_team_selection(
         patient_info=patient_info, selected_team=healthcare_team
@@ -306,7 +308,7 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                         )
 
         print(
-            f"  Generated {len(option_arguments)} arguments from {len(healthcare_team)} agents"
+            f"Generated {len(option_arguments)} arguments from {len(healthcare_team)} agents"
         )
 
     # Store all the tracking information
