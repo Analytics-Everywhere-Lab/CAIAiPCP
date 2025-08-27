@@ -12,14 +12,14 @@ PG_VECTOR_DOCUMENT_COLLECTION_NAME=v_store
 OLLAMA_LLM_MODEL=qwen3:8b
 ~~~
 
-- Setting up postgres
+- Setting up postgres - (assumes you have docker desktop installed)
 ~~~
 <new terminal window>
 cd ./docker/
 docker-compose --profile server up
 ~~~
 - This will populate the database (only happens once) and start up postres with pgvector
-
+- There is a `cli.sh` file in the `docker/util_scripts` directory that can be used to connect to the database using the command-line interface
 
 
 - Run following commands to setup the conda environment with python 3.13.3
