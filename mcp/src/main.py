@@ -52,18 +52,20 @@ async def get_available_booking_slots_for_provider(provider_name: str) -> List[d
 
 
 @mcp.tool()
-async def book_slot_for_provider(provider_name: str, time_slot: str, client_id: str) -> int:
-    """books a client appoinment with a provider at specified time slot. Time slot is expressed as 'YYYY-MM-DD HH24:MI:SS'"""
+async def book_slot_for_provider(provider_name: str, slot_number: str, client_id: str) -> int:
+    """books a client appoinment with a provider at specified slot_number
+    output is ALWAYS the number of rows affected. If it is 1, this indicates success.
+    Otherwise, it is a failiure."""
     logging.info(f'Booking appointment with : {provider_name} for client : {client_id} on {time_slot}')
     affected = await execute_sql("""
                             UPDATE availability 
                             SET 
                                 client_to_attend = %s, is_available = False 
                             WHERE 
-                                dt_time_slot = TO_TIMESTAMP(%s, 'YYYY-MM-DD HH24:MI:SS')
+                                slot_number = %s 
                             AND
                                 LOWER(provider_name) = %s
-                            """, False, client_id, time_slot, provider_name.lower())
+                            """, False, client_id, slot_number, provider_name.lower())
     print(f'Rows affected : {affected}')
     return affected
 
