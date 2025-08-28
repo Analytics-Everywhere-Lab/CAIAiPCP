@@ -801,7 +801,7 @@ class CarePlanGradioInterface:
             msg_visible=True,
             refs=ref_data,
         )
-        return
+
 
     def continue_after_review(self, history):
         """Continue processing after human review is complete with streaming"""
@@ -811,8 +811,7 @@ class CarePlanGradioInterface:
             return
 
         try:
-            continuation_thread_id = f"continue_{uuid4().hex}"
-            cfg = {"configurable": {"thread_id": continuation_thread_id}}
+            cfg = {"configurable": {"thread_id": self.current_thread_id}}
 
             self.current_state["human_review_complete"] = True
             self.current_state["current_step"] = "argument_validation"
@@ -828,19 +827,29 @@ class CarePlanGradioInterface:
 
             yield history, {}
 
-            continuation_graph = create_care_plan_graph()
-
             def stream_updates():
                 nonlocal history
                 final_state = None
-                current_node = None
+                current_node = "argument_validation"
 
                 node_messages = {
                     "argument_validation": "🔍 Validating arguments with medical evidence...",
                     "plan_revision": "📝 Generating personalized care plan recommendations...",
                 }
 
-                for event in continuation_graph.stream(self.current_state, cfg):
+                self.graph.update_state(
+                    cfg,
+                    {
+                        "human_review_complete": True,
+                        "current_step": "argument_validation",
+                        "enable_streaming": True,
+                    },
+                )
+
+                graph_state = self.graph.get_state(cfg)
+                print("Current graph state before streaming:", graph_state)
+
+                for event in self.graph.stream(None, cfg):
                     for node_name, node_state in event.items():
                         if node_name != current_node:
                             current_node = node_name
