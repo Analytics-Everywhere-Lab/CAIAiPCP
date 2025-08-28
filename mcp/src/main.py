@@ -53,10 +53,15 @@ async def get_available_booking_slots_for_provider(provider_name: str) -> List[d
 
 @mcp.tool()
 async def book_slot_for_provider(provider_name: str, slot_number: str, client_id: str) -> int:
-    """books a client appoinment with a provider at specified slot_number
-    output is ALWAYS the number of rows affected. If it is 1, this indicates success.
-    Otherwise, it is a failiure."""
-    logging.info(f'Booking appointment with : {provider_name} for client : {client_id} on {time_slot}')
+    """
+    Books a client appointment with a provider at a specific slot number.
+
+    RULES:
+    - Inputs (provider_name and slot_number) may come from free-text user input.
+    - Only book the slot if the inputs exactly match a valid slot returned by 
+      get_available_booking_slots_for_provider.
+    - Ensure that the database is updated""" 
+    logging.info(f'Booking appointment with : {provider_name} for client : {client_id} on {slot_number}')
     affected = await execute_sql("""
                             UPDATE availability 
                             SET 
