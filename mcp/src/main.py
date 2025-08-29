@@ -3,7 +3,6 @@ from util.async_db import execute_sql
 from typing import List
 from util import settings
 import logging
-import datetime
 
 
 # Create an MCP server
@@ -41,11 +40,11 @@ async def get_available_booking_slots_for_provider(provider_name: str) -> List[d
     logging.info(f'Getting open slots for {provider_name}')
     res = await execute_sql(
             """
-            SELECT provider_name, slot_number, TO_CHAR(dt_time_slot, 'YYYY-MM-DD HH24:MI:SS') as time_slot FROM AVAILABILITY 
-            WHERE lower(provider_name) = %s 
-            and 
-            is_available = True 
-            order by slot_number asc limit (5)""", 
+            SELECT provider_name, slot_number, strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) as time_slot FROM AVAILABILITY
+            WHERE lower(provider_name) = ?
+            and
+            is_available = True
+            order by slot_number asc limit (5)""",
             True, provider_name.lower())
     open_slots = [{"provider_name": e["provider_name"],"slot_number": e["slot_number"], "time_slot": e["time_slot"]} for e in res]
     return open_slots
@@ -58,18 +57,18 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
 
     RULES:
     - Inputs (provider_name and slot_number) may come from free-text user input.
-    - Only book the slot if the inputs exactly match a valid slot returned by 
+    - Only book the slot if the inputs exactly match a valid slot returned by
       get_available_booking_slots_for_provider.
-    - Ensure that the database is updated""" 
+    - Ensure that the database is updated"""
     logging.info(f'Booking appointment with : {provider_name} for client : {client_id} on {slot_number}')
     affected = await execute_sql("""
-                            UPDATE availability 
-                            SET 
-                                client_to_attend = %s, is_available = False 
-                            WHERE 
-                                slot_number = %s 
+                            UPDATE availability
+                            SET
+                                client_to_attend = ?, is_available = False
+                            WHERE
+                                slot_number = ?
                             AND
-                                LOWER(provider_name) = %s
+                                LOWER(provider_name) = ?
                             """, False, client_id, slot_number, provider_name.lower())
     print(f'Rows affected : {affected}')
     return affected

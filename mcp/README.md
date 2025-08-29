@@ -50,7 +50,7 @@ cd ./src
 conda create -n mcp-server python=3.13.3
 conda activate mcp-server
 pip install -r requirements.txt
-pip install psycopg-binary
+pip install aiosqlite
 ~~~
 
 
