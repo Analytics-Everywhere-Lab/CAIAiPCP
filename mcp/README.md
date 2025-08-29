@@ -15,7 +15,7 @@ The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.
 
 
-- Setting up the sqlite3 database (Assumes have sqlite3 already installed as is the case on a Mac.)
+- Setting up the sqlite3 database (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
 cd ./util_scripts
