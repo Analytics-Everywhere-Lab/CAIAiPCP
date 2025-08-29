@@ -2,6 +2,7 @@
 
 - MCP server used to share tools, prompts and resources
 - Available tools :
+   - `cancel_booked_appointment_for_client` - Cancels a client appointment with a provider at a specific slot number
    - `get_provider_names` - returns a list of available providers
    - `get_provider_roles` - returns a list of available provider roles
    - `get_available_booking_slots_for_provider` - returns a list of available / open provider time slots
@@ -58,6 +59,8 @@ python main.py
 
 
 - If you want to test the mcp server with Jupyter
+- The Jupyter notebook is helpful when learning how to interact with the MCP server. 
+   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) for details on how to interact with the service.
 ~~~
 <new terminal window>
 conda activate mcp-server
@@ -79,7 +82,7 @@ sh run_unit_tests.sh
 - When running the unit tests, your terminal should look like this:
 ![unittest](./images/unittest.png "unittest")
 
-- Test should run all succeed
+- Test should all succeed. It is best to re-initialize the database prior to running the tests.
 
 
 - If you want to run the MCP inspector:

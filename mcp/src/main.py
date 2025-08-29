@@ -45,9 +45,28 @@ def configure_assistant() -> list[dict]:
 
 
 @mcp.tool()
-async cancel_booked_appointments_for_client(client_id: str, provider_name: str, slot_number: str) -> int:
-    pass
+async def cancel_booked_appointment_for_client(client_id: str, provider_name: str, slot_number: str) -> int:
+    """
+    Cancels a client appointment with a provider at a specific slot number.
 
+    RULES:
+    - Inputs (client_id provider_name and slot_number) may come from free-text user input.
+    - Ensure that the database is updated"""
+    logging.info(f'Canceling appointment with : {provider_name} for client : {client_id} at slot : {slot_number}')
+    affected = await execute_sql("""
+                            UPDATE availability
+                            SET
+                                client_to_attend = '', is_available = True
+                            WHERE
+                                slot_number = ?
+                            AND
+                                LOWER(provider_name) = ?
+                            AND
+                                client_to_attend = ?
+                            """, False, slot_number, provider_name.lower(), client_id)
+
+    logging.info(f'Rows affected : {affected}')
+    return affected
 
 
 @mcp.tool()
@@ -101,7 +120,7 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
     - Only book the slot if the inputs exactly match a valid slot returned by
       get_available_booking_slots_for_provider.
     - Ensure that the database is updated"""
-    logging.info(f'Booking appointment with : {provider_name} for client : {client_id} on {slot_number}')
+    logging.info(f'Booking appointment with : {provider_name} for client : {client_id} at slot: {slot_number}')
     affected = await execute_sql("""
                             UPDATE availability
                             SET
