@@ -2,13 +2,13 @@
 
 - MCP server used to share tools, prompts and resources
 - Available tools :
-   - *get_provider_names* - returns a list of available providers
-   - *get_provider_roles* - returns a list of available provider roles
-   - *get_available_booking_slots_for_provider* - returns a list of available / open provider time slots
-   - *book_slot_for_provider* - books client appoinment with provider at specified time slot
-   - *list_booked_appointments_for_client* - Returns a list of booked appointments for a client
+   - `get_provider_names` - returns a list of available providers
+   - `get_provider_roles` - returns a list of available provider roles
+   - `get_available_booking_slots_for_provider` - returns a list of available / open provider time slots
+   - `book_slot_for_provider` - books client appoinment with provider at specified time slot
+   - `list_booked_appointments_for_client` - Returns a list of booked appointments for a client
 - Available prompts :
-   - *configure_assistant*
+   - `configure_assistant`
 
 # General Setup and Usage Instructions
 
@@ -30,7 +30,7 @@ sh init_db.sh
 
 - There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
 - Running the command-line interface is optional
-- When run, you can issue SQL queries interactively. 
+- When run, you can issue SQL queries interactively
 - If the `cli.sh` script is run, you should see something like this in your terminal:
 
 ![cli](./images/cli.png "cli")
