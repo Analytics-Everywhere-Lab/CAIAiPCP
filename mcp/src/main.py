@@ -9,6 +9,40 @@ import logging
 mcp = FastMCP("Demo")
 
 
+@mcp.prompt()
+def configure_assistant() -> list[dict]:
+    prompt = """
+        You are a scheduling assistant. You must ONLY interact with the environment using the following tools:
+        - list_booked_appointments_for_client → returns a list booked appointments for a client id
+        - get_provider_names → returns a list of available providers
+        - get_provider_roles → returns a list of provider roles
+        - get_available_booking_slots_for_provider → returns list of 5 earliest available time slots for a provider. 
+          response is JSON with a top-level "result" field.
+          "result" is a list of dicts, each with:
+            - slot_number (integer, sorted ascending)
+            - provider_name (string)
+            - time_slot (string in 'YYYY-MM-DD HH24:MI:SS' format).
+
+        - book_slot_for_provider → books a client appointment with a provider at a specified slot number.
+
+        STRICT RULES:
+        1. NEVER invent, summarize, analyze, or describe provider names, roles, or time slots. 
+        2. NEVER generate your own list. ONLY return exactly what the tool output provides inside the "result" field. 
+        3. If asked about availability, ALWAYS call get_available_booking_slots_for_provider once per request. 
+        4. When booking, ALWAYS use the exact slot_number and provider_name from the tool output.
+           ALWAYS call the book_slot_for_provider when booking an appointment. Check that affected return parameter (number of rows updated) from 
+           the function call is correct and is 1. Do not circumvent the tool call. Ensure that the database is really updated.
+        5. You must not provide totals, summaries, statistics, distributions, or "observations" about slots. 
+        6. If asked for a specific slot (e.g. "what is the slot_number for 2024-08-20 10:00:00?"), 
+           search the tool output JSON for that exact time_slot and return its slot_number exactly as-is.
+    """
+    messages = [{
+            "role": "assistant",
+            "content": prompt,
+    }]
+    return messages
+
+
 @mcp.tool()
 async def get_provider_names() -> List[dict]:
     """returns a list of available providers"""
@@ -72,6 +106,55 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
                             """, False, client_id, slot_number, provider_name.lower())
     print(f'Rows affected : {affected}')
     return affected
+
+
+@mcp.tool()
+async def cancel_slot_for_provider(provider_name: str, slot_number: str) -> int:
+    pass
+
+
+@mcp.tool()
+async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
+    """
+    Returns list of booked appointments for a client. Note that the list of appointments
+    can be empty.
+
+    Output is ALWAYS a list of JSON documents with fields:
+      - client_id (string indicating the client's identification number)
+      - slot_number (integer, sorted ascending)
+      - provider_name (string)
+      - time_slot (string, format 'YYYY-MM-DD HH24:MI:SS')
+      - provider_is_booked (true or false)
+    """
+    logging.info(f'Getting booked appointments for client id : {client_id}')
+    res = await execute_sql(
+            """
+            SELECT
+                client_to_attend as client_id,
+                slot_number,
+                provider_name,
+                strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) as time_slot,
+                is_available as provider_is_booked
+            FROM
+                AVAILABILITY
+            WHERE
+                lower(client_to_attend) = ?
+            order by
+                slot_number
+            asc
+                limit (25)""",
+            True, client_id.lower())
+    booked_list = [
+        {
+            "client_id": e["client_id"],
+            "slot_number": e["slot_number"],
+            "provider_name": e["provider_name"],
+            "time_slot": e["time_slot"],
+            "provider_is_booked": e["provider_is_booked"]
+        } for e in res
+    ]
+    logging.info(f'Size of booked appointments list: {len(booked_list)}')
+    return booked_list
 
 
 if __name__ == "__main__":
