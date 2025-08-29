@@ -2,7 +2,7 @@
 
 - MCP server used to share tools, prompts and resources
 - Available tools :
-   - *get_provider_names* - returns a list of available providers*
+   - *get_provider_names* - returns a list of available providers
    - *get_provider_roles* - returns a list of available provider roles
    - *get_available_booking_slots_for_provider* - returns a list of available / open provider time slots
    - *book_slot_for_provider* - books client appoinment with provider at specified time slot
@@ -16,7 +16,7 @@ The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.
 
 
-- Setting up the sqlite3 database (Assumes sqlite3 is already installed as is the case on a Mac.)
+- Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
 cd ./util_scripts
@@ -30,7 +30,8 @@ sh init_db.sh
 
 - There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
 - Running the command-line interface is optional
-- When run, you can issue SQL queries interactively. When the `cli.sh` script is run, you should see something like this in your terminal:
+- When run, you can issue SQL queries interactively. 
+- If the `cli.sh` script is run, you should see something like this in your terminal:
 
 ![cli](./images/cli.png "cli")
 
