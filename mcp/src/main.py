@@ -14,6 +14,7 @@ def configure_assistant() -> list[dict]:
     prompt = """
         You are a scheduling assistant. You must ONLY interact with the environment using the following tools:
         - list_booked_appointments_for_client → returns a list booked appointments for a client id
+        - cancel_booked_appointment_for_client → cancels booked appointment for a specific client_id, provider_name and slot_number combination
         - get_provider_names → returns a list of available providers
         - get_provider_roles → returns a list of provider roles
         - get_available_booking_slots_for_provider → returns list of 5 earliest available time slots for a provider. 
@@ -41,6 +42,12 @@ def configure_assistant() -> list[dict]:
             "content": prompt,
     }]
     return messages
+
+
+@mcp.tool()
+async cancel_booked_appointments_for_client(client_id: str, provider_name: str, slot_number: str) -> int:
+    pass
+
 
 
 @mcp.tool()

@@ -79,6 +79,8 @@ sh run_unit_tests.sh
 - When running the unit tests, your terminal should look like this:
 ![unittest](./images/unittest.png "unittest")
 
+- Test should run all succeed
+
 
 - If you want to run the MCP inspector:
 ~~~

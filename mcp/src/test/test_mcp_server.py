@@ -3,10 +3,7 @@ from base_test_case import BaseAsyncTestCase
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
 from langchain_ollama import ChatOllama
-
-
-MCP_SERVER_URL="http://localhost:8000/sse"
-OLLAMA_URL="http://localhost:11434"
+from util.settings import OLLAMA_URL, MCP_SERVER_URL
 
 
 class TestMcpServer(BaseAsyncTestCase):
@@ -22,6 +19,9 @@ class TestMcpServer(BaseAsyncTestCase):
                 }
             }
         )
+        self._tools = await self._client.get_tools()
+        self._prompt_coroutine = await self._client.get_prompt('Demo', 'configure_assistant')
+        self._prompt = self._prompt_coroutine[0].content
 
     async def asyncTearDown(self):
         await super().asyncTearDown()
@@ -39,11 +39,11 @@ class TestMcpServer(BaseAsyncTestCase):
 
     async def test_mcp(self):
         logging.info('Testing basic mcp server functionality')
-        tools = await self._client.get_tools()
 
         agent = create_react_agent(
             self._llm,
-            tools
+            self._tools,
+            prompt=self._prompt
         )
 
         resp = await agent.ainvoke(
@@ -55,9 +55,10 @@ class TestMcpServer(BaseAsyncTestCase):
         self.assertTrue(is_ok)
 
         resp = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": "When is Susan Davis open for bookings? Provide a list of open time slots."}]}
+            {"messages": [{"role": "user", "content": "I want to book an apointment with Susan Davis ? Find the 5 earliest times."}]}
         )
-        is_ok = '#### **August 16, 2024**'.lower() in resp['messages'][-1].content.lower()
+        logging.info(f'Tool call response :{resp}')
+        is_ok = '2024-08-07 12:00:00'.lower() in resp['messages'][-1].content.lower()
         self.assertTrue(is_ok)
 
 
