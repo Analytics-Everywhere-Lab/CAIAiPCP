@@ -69,7 +69,7 @@ jupyter notebook
 
 
 - If you want to run the unit tests,
-- Note that the MCP server must be running for the tests to pass
+- Note that the MCP server must be running and the datbase must exist for the tests to pass
 ~~~
 <new terminal window>
 conda activate mcp-server
@@ -89,7 +89,7 @@ sh start_inpector.sh
 ~~~
 - The GUI for the inspector should look like this:
 ![inspector](./images/inspector.png "inspector")
-- Note that the MCP server and the pg-vector docker container must be running in order to interact with the tools using the inspector
+- Note that the MCP server must be running and the database must exit in order to interact with the tools using the inspector
 
 
 - Note that the inspector needs `npm` and `nodejs`. These can be installed with brew.
