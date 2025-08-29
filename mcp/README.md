@@ -33,6 +33,8 @@ sh init_db.sh
 
 ![cli](./images/cli.png "cli")
 
+- To reset the database, delete the `./db/aip.db` file and re-run the database setup step.
+
 
 - Run following commands to setup the conda environment with python 3.13.3
 ~~~
@@ -65,7 +67,7 @@ jupyter notebook
 
 
 - If you want to run the unit tests,
-- Note that the MCP server and the pg-vector docker container must be running for the tests to pass
+- Note that the MCP server must be running for the tests to pass
 ~~~
 <new terminal window>
 conda activate mcp-server
