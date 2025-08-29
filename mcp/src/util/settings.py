@@ -1,13 +1,9 @@
-import os
-from dotenv import load_dotenv
 import json
 
-load_dotenv('./.env')
 
-
-LOG_SETTING_FILE = os.getenv('LOG_SETTING_FILE')
-OLLAMA_LLM_MODEL = os.getenv('OLLAMA_LLM_MODEL')
-SQLITE_DB_PATH='../db/aip.db'
+LOG_SETTING_FILE = './logging.conf'
+OLLAMA_LLM_MODEL = 'qwen3:8b'
+SQLITE_DB_PATH = '../db/aip.db'
 
 
 def get_logging_config(file_name: str) -> json:
