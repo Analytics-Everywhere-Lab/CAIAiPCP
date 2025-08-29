@@ -109,22 +109,16 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
 
 
 @mcp.tool()
-async def cancel_slot_for_provider(provider_name: str, slot_number: str) -> int:
-    pass
-
-
-@mcp.tool()
 async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
     """
-    Returns list of booked appointments for a client. Note that the list of appointments
-    can be empty.
+    Returns a list of booked appointments for a client.
+    The list of appointments may be empty if the client has no bookings.
 
-    Output is ALWAYS a list of JSON documents with fields:
-      - client_id (string indicating the client's identification number)
-      - slot_number (integer, sorted ascending)
-      - provider_name (string)
-      - time_slot (string, format 'YYYY-MM-DD HH24:MI:SS')
-      - provider_is_booked (true or false)
+    When the results are not empty, output is always a list of JSON objects with the following fields:
+      - client_id: string representing the client's identification number
+      - slot_number: integer, sorted in ascending order
+      - provider_name: string
+      - time_slot: string in the format 'YYYY-MM-DD HH24:MI:SS'
     """
     logging.info(f'Getting booked appointments for client id : {client_id}')
     res = await execute_sql(
@@ -133,8 +127,7 @@ async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
                 client_to_attend as client_id,
                 slot_number,
                 provider_name,
-                strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) as time_slot,
-                is_available as provider_is_booked
+                strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) as time_slot
             FROM
                 AVAILABILITY
             WHERE
@@ -149,8 +142,7 @@ async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
             "client_id": e["client_id"],
             "slot_number": e["slot_number"],
             "provider_name": e["provider_name"],
-            "time_slot": e["time_slot"],
-            "provider_is_booked": e["provider_is_booked"]
+            "time_slot": e["time_slot"]
         } for e in res
     ]
     logging.info(f'Size of booked appointments list: {len(booked_list)}')
