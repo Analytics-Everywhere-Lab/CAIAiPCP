@@ -36,7 +36,7 @@ sh init_db.sh
 
 ![cli](./images/cli.png "cli")
 
-- To reset the database, delete the `.<project root>/mcp/db/aip.db` file and re-run the database setup step.
+- To reset the database, delete the `<project root>/mcp/db/aip.db` file and re-run the database setup step.
 
 
 - Run following commands to setup the conda environment with python 3.13.3
