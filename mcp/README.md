@@ -23,7 +23,7 @@ They have been tested and validate on a Mac M2.
 cd ./util_scripts
 sh init_db.sh
 ~~~
-- This will create and populate the database. Only run this once.
+- This will create and populate the database (the database file is : `<project root>/mcp/db/aip.db`). Only run this once.
 - When the databaes is ready, you should see something like this in your terminal :
 
 ![sqlite](./images/sqlite.png "sqlite")
@@ -36,7 +36,7 @@ sh init_db.sh
 
 ![cli](./images/cli.png "cli")
 
-- To reset the database, delete the `./db/aip.db` file and re-run the database setup step.
+- To reset the database, delete the `.<project root>/mcp/db/aip.db` file and re-run the database setup step.
 
 
 - Run following commands to setup the conda environment with python 3.13.3
@@ -52,7 +52,9 @@ pip install aiosqlite
 
 - Start the MCP server
 ~~~
-python main.py
+<new terminal window>
+cd ./src/back_end
+python mcp_server.py
 ~~~
 - When the MCP server script is run, you should see something like this in your terminal:
 ![mcp](./images/mcp.png "mcp")
@@ -60,13 +62,14 @@ python main.py
 
 - If you want to test the mcp server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
-   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) for details on how to interact with the service.
+   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/mcp_test.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the service.
 ~~~
 <new terminal window>
+cd ./src
 conda activate mcp-server
 jupyter notebook
 ~~~
-- Note books will be located in `./src/jupyter
+- Notebooks will be located in the `./jupyter` directory
 
 ![jupyter](./images/jupyter.png "jupyter")
 
@@ -83,6 +86,19 @@ sh run_unit_tests.sh
 ![unittest](./images/unittest.png "unittest")
 
 - Test should all succeed. It is best to re-initialize the database prior to running the tests.
+
+
+- If you want to run the command-line chat interface:
+~~~
+<new terminal window>
+conda activate mcp-server
+cd ./src/front_end/
+python cli_demo.py
+~~~
+- When running the command-line interface your terminal should look like this:
+![mcp_client](./images/mcp_cli.png "mcp_client")
+
+- Note that the MCP server needs to be running for the chat client to work
 
 
 - If you want to run the MCP inspector:
