@@ -62,7 +62,7 @@ python mcp_server.py
 
 - If you want to test the mcp server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
-   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/mcp_test.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the service.
+   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the service.
 ~~~
 <new terminal window>
 cd ./src
