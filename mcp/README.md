@@ -17,7 +17,7 @@ The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.
 
 
-- Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
+- (REQUIRED) - Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
 cd ./util_scripts
@@ -29,7 +29,7 @@ sh init_db.sh
 ![sqlite](./images/sqlite.png "sqlite")
 
 
-- There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
+- (OPTIONAL) - There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
 - Running the command-line interface is optional
 - When run, you can issue SQL queries interactively
 - If the `cli.sh` script is run, you should see something like this in your terminal:
@@ -39,7 +39,7 @@ sh init_db.sh
 - To reset the database, delete the `<project root>/mcp/db/aip.db` file and re-run the database setup step.
 
 
-- Run following commands to setup the conda environment with python 3.13.3
+- (REQUIRED) - Run following commands to setup the conda environment with python 3.13.3
 ~~~
 <new terminal window>
 cd ./src
@@ -50,7 +50,7 @@ pip install aiosqlite
 ~~~
 
 
-- Start the MCP server
+- (REQUIRED) - Start the MCP server
 ~~~
 <new terminal window>
 cd ./src/back_end
@@ -60,7 +60,7 @@ python mcp_server.py
 ![mcp](./images/mcp.png "mcp")
 
 
-- If you want to test the mcp server with Jupyter
+- (OPTIONAL) - If you want to test the mcp server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
    - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the service.
 ~~~
@@ -74,7 +74,8 @@ jupyter notebook
 ![jupyter](./images/jupyter.png "jupyter")
 
 
-- If you want to run the unit tests,
+
+- (OPTIONAL) - If you want to run the unit tests,
 - Note that the MCP server must be running and the datbase must exist for the tests to pass
 ~~~
 <new terminal window>
@@ -85,10 +86,11 @@ sh run_unit_tests.sh
 - When running the unit tests, your terminal should look like this:
 ![unittest](./images/unittest.png "unittest")
 
-- Test should all succeed. It is best to re-initialize the database prior to running the tests.
+- The tests should all succeed. It is best to re-initialize the database prior to running the tests.
 
 
-- If you want to run the command-line chat interface:
+
+- (OPTIONAL) -  If you want to run the command-line chat interface:
 ~~~
 <new terminal window>
 conda activate mcp-server
@@ -101,7 +103,8 @@ python cli_demo.py
 - Note that the MCP server needs to be running for the chat client to work
 
 
-- If you want to run the MCP inspector:
+
+- (OPTIONAL) - If you want to run the MCP inspector:
 ~~~
 <new terminal window>
 conda activate mcp-server
