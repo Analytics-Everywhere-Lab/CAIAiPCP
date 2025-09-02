@@ -17,6 +17,8 @@ The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.
 
 
+---
+
 - (REQUIRED) - Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
@@ -29,6 +31,8 @@ sh init_db.sh
 ![sqlite](./images/sqlite.png "sqlite")
 
 
+---
+
 - (OPTIONAL) - There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
 - Running the command-line interface is optional
 - When run, you can issue SQL queries interactively
@@ -37,6 +41,9 @@ sh init_db.sh
 ![cli](./images/cli.png "cli")
 
 - To reset the database, delete the `<project root>/mcp/db/aip.db` file and re-run the database setup step.
+
+
+---
 
 
 - (REQUIRED) - Run following commands to setup the conda environment with python 3.13.3
@@ -50,6 +57,9 @@ pip install aiosqlite
 ~~~
 
 
+---
+
+
 - (REQUIRED) - Start the MCP server
 ~~~
 <new terminal window>
@@ -60,9 +70,13 @@ python mcp_server.py
 ![mcp](./images/mcp.png "mcp")
 
 
+
+---
+
+
 - (OPTIONAL) - If you want to test the mcp server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
-   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the service.
+   - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the MCP server.
 ~~~
 <new terminal window>
 cd ./src
@@ -73,6 +87,9 @@ jupyter notebook
 
 ![jupyter](./images/jupyter.png "jupyter")
 
+
+
+---
 
 
 - (OPTIONAL) - If you want to run the unit tests,
@@ -89,6 +106,8 @@ sh run_unit_tests.sh
 - The tests should all succeed. It is best to re-initialize the database prior to running the tests.
 
 
+---
+
 
 - (OPTIONAL) -  If you want to run the command-line chat interface:
 ~~~
@@ -103,6 +122,8 @@ python cli_demo.py
 - Note that the MCP server needs to be running for the chat client to work
 
 
+---
+
 
 - (OPTIONAL) - If you want to run the MCP inspector:
 ~~~
@@ -114,6 +135,5 @@ sh start_inpector.sh
 - The GUI for the inspector should look like this:
 ![inspector](./images/inspector.png "inspector")
 - Note that the MCP server must be running and the database must exit in order to interact with the tools using the inspector
-
 
 - Note that the inspector needs `npm` and `nodejs`. These can be installed with brew.
