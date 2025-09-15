@@ -20,7 +20,7 @@ def care_plan_generator(state: GraphState) -> GraphState:
         context_section = f"\n{state['rag_context']}\n"
 
     prompt = f"""You are an expert geriatric care planner. Based on the following patient information and relevant medical knowledge provided,
-    generate 1-3 specific handling options for their care plan in aging-in-place context.
+    generate 1-2 specific handling options for their care plan in aging-in-place context.
 
     {context_section}
     
@@ -344,6 +344,7 @@ def human_review(state: GraphState) -> GraphState:
 
 def argument_validator(state: GraphState) -> GraphState:
     """Third LLM: Validate arguments with option to retrieve more evidence"""
+    print("🫡 Validating arguments...")
     validated_arguments = []
     vector_db = MedicalVectorDB()
 

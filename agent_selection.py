@@ -11,11 +11,11 @@ class TeamComposition:
     """Manages the composition of the healthcare team"""
 
     # Define minimum and maximum team sizes
-    MIN_TEAM_SIZE = 2
-    MAX_TEAM_SIZE = 8
+    MIN_TEAM_SIZE = 1
+    MAX_TEAM_SIZE = 2
 
     # Core roles that should almost always be present
-    CORE_ROLES = {HealthcareRole.NURSE, HealthcareRole.GENERAL_PRACTITIONER}
+    CORE_ROLES = {HealthcareRole.NURSE}
 
 
 def analyze_patient_needs(patient_info: str) -> Dict:
@@ -35,7 +35,7 @@ def analyze_patient_needs(patient_info: str) -> Dict:
         5. SAFETY RISKS (falls, medication errors, self-harm, wandering, etc.)
         6. COORDINATION needs (multiple conditions, transitions, family involvement)
 
-        Provide a structured analysis in JSON format:
+        Must provide a structured analysis in JSON format:
         {{
             "medical_conditions": ["condition1", "condition2", ...],
             "functional_status": {{
@@ -52,10 +52,6 @@ def analyze_patient_needs(patient_info: str) -> Dict:
 
     try:
         response = call_llm(analysis_prompt, temperature=0.3, max_tokens=512)
-
-        # Extract JSON from response
-        import re
-
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
         if json_match:
             analysis = json.loads(json_match.group())
@@ -84,7 +80,7 @@ def select_healthcare_team(
     patient_info: str,
     patient_analysis: Optional[Dict] = None,
     force_include: Optional[Set[HealthcareRole]] = None,
-    max_team_size: int = 8,
+    max_team_size: int = 2,
 ) -> List[HealthcareAgent]:
     """
     Use LLM to intelligently select the most appropriate healthcare team
@@ -161,7 +157,7 @@ def select_healthcare_team(
 
     try:
         # Get LLM response
-        response = call_llm(selection_prompt, temperature=0.4, max_tokens=512)
+        response = call_llm(selection_prompt, temperature=0.4, max_tokens=700)
 
         # Extract JSON from response
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
