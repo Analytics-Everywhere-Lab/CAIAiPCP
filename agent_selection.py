@@ -12,7 +12,7 @@ class TeamComposition:
 
     # Define minimum and maximum team sizes
     MIN_TEAM_SIZE = 1
-    MAX_TEAM_SIZE = 2
+    MAX_TEAM_SIZE = 3
 
     # Core roles that should almost always be present
     CORE_ROLES = {HealthcareRole.NURSE}
@@ -306,15 +306,15 @@ def get_agents_for_condition_llm(
 
     # Determine max team size based on complexity
     complexity = patient_analysis.get("complexity_level", "moderate")
-    if complexity == "low":
-        max_team_size = 4
-    elif complexity == "moderate":
-        max_team_size = 6
-    elif complexity == "high":
-        max_team_size = 7
-    else:  # very_high
-        max_team_size = TeamComposition.MAX_TEAM_SIZE
-
+    # if complexity == "low":
+    #     max_team_size = 4
+    # elif complexity == "moderate":
+    #     max_team_size = 6
+    # elif complexity == "high":
+    #     max_team_size = 7
+    # else:  # very_high
+    #     max_team_size = TeamComposition.MAX_TEAM_SIZE
+    max_team_size = TeamComposition.MAX_TEAM_SIZE
     # Check for any custom requirements
     force_include = set()
     if custom_requirements:

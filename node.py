@@ -1,4 +1,5 @@
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
+from mcp_utils import _fetch_available_slots_for_provider
 from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState
 from llm_caller import call_llm, call_llm_stream
@@ -8,7 +9,6 @@ from agent_selection import (
     explain_team_selection,
     analyze_patient_needs,
 )
-from healthcare_agents import format_agent_argument_display
 import re
 
 
@@ -867,4 +867,39 @@ def rag_retrieval(state: GraphState) -> GraphState:
     state["rag_context"] = rag_context
     print(f"Retrieved {len(all_documents)} relevant documents with references")
 
+    return state
+
+
+def scheduling(state: Dict[str, Any]) -> Dict[str, Any]:
+    team = state.get("healthcare_team", []) or []
+    slots_by_provider: Dict[str, List[Dict[str, Any]]] = {}
+
+    for member in team:
+        provider_name = (
+            member.get("name") or member.get("agent_name") or member.get("role")
+        )
+        if not provider_name:
+            continue
+        try:
+            slots = _fetch_available_slots_for_provider(provider_name)
+        except Exception as e:
+            print(f"[scheduling] MCP call failed for {provider_name}: {e}")
+            slots = []
+        slots_by_provider[provider_name] = slots
+
+    try:
+        summary_prompt = (
+            "You are a concise scheduling assistant.\n"
+            "Given the provider availability (JSON), produce a brief bullet list with provider name and the first 2 upcoming slots only.\n"
+            "Use a friendly, neutral tone. Do NOT invent times.\n\n"
+            f"AVAILABILITY JSON:\n{slots_by_provider}\n"
+        )
+        summary = call_llm(summary_prompt, temperature=0.2, max_tokens=180)
+    except Exception:
+        summary = (
+            "Availability found. See the table below for each provider’s next slots."
+        )
+
+    state["scheduling_slots"] = slots_by_provider
+    state["scheduling_summary"] = summary.strip()
     return state

@@ -58,3 +58,8 @@ class GraphState(TypedDict):
     streaming_chunk: Optional[str]
     partial_response: Optional[str]
     rag_progress: Optional[str]
+
+    # Scheduling
+    scheduling_query: Optional[Dict[str, Any]]  # optional filter, e.g., date range
+    scheduling_slots: Optional[Dict[str, List[Dict[str, Any]]]]  # provider_name -> slot dicts
+    scheduling_summary: Optional[str]
