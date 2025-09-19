@@ -14,11 +14,15 @@ class CarePlanGradioInterface:
     """
 
     NODE_STATUS = {
-        "rag_retrieval": "📚 Searching medical knowledge database...",
-        "care_plan_generation": "🏥 Analyzing patient information and generating care options...",
-        "argument_generation": "💭 Creating evidence-based arguments...",
-        "human_review": "📋 Preparing arguments for your review...",
+        "rag_retrieval": "🔍 Retrieving information...",
+        "care_plan_generation": "🤖 Generating care plan...",
+        "argument_generation": "🗣️ Preparing plan rationale...",
+        "human_review": "👨‍⚕️ Waiting for human review...",
+        "argument_validation": "✅ Validating arguments...",
+        "plan_revision": "📝 Revising care plan...",
+        "scheduling": "📋 Checking provider availability..."
     }
+
 
     def __init__(self):
         self.graph = None
@@ -1085,9 +1089,8 @@ class CarePlanGradioInterface:
                             yield updated_history, refs
 
                         if "revised_care_plan" in node_state:
-                            final_state = node_state
                             nodes_completed.add("plan_revision")
-                            
+
                     # Handle scheduling node
                     elif node_name == "scheduling":
                         scheduling_updates = self._handle_scheduling_node(
@@ -1097,7 +1100,10 @@ class CarePlanGradioInterface:
                             yield updated_history, refs
 
                         if node_state.get("scheduling_slots") is not None:
+                            # mark scheduling as complete and set the final state here
                             nodes_completed.add("scheduling")
+                            final_state = node_state
+
 
             # Format and yield final care plan if we have it
             if final_state and final_state.get("revised_care_plan"):

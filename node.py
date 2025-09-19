@@ -902,4 +902,5 @@ def scheduling(state: Dict[str, Any]) -> Dict[str, Any]:
 
     state["scheduling_slots"] = slots_by_provider
     state["scheduling_summary"] = summary.strip()
+    state["current_step"] = "scheduling"
     return state

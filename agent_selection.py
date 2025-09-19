@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 from healthcare_agents import HealthcareRole, HealthcareAgent, HEALTHCARE_AGENTS
-from llm_caller import call_llm, call_llm_stream
+from llm_caller import call_llm
 
 
 class TeamComposition:
@@ -109,51 +109,42 @@ def select_healthcare_team(
         available_roles.append(role_desc)
 
     # Build the team selection prompt
-    selection_prompt = f"""You are assembling an optimal interdisciplinary healthcare team for an elderly patient's care plan.
+    selection_prompt = f"""
+    You are assembling an optimal interdisciplinary healthcare team for an elderly patient's care plan.
 
-        PATIENT INFORMATION:
-        {patient_info}
+    PATIENT INFORMATION:
+    {patient_info}
 
-        PATIENT ANALYSIS:
-        {json.dumps(patient_analysis, indent=2)}
+    PATIENT ANALYSIS:
+    {json.dumps(patient_analysis, indent=2)}
 
-        AVAILABLE HEALTHCARE PROFESSIONALS:
-        {json.dumps(available_roles, indent=2)}
+    AVAILABLE HEALTHCARE PROFESSIONALS:
+    {json.dumps(available_roles, indent=2)}
 
-        TEAM ASSEMBLY GUIDELINES:
-        1. Select {TeamComposition.MIN_TEAM_SIZE} to {max_team_size} team members
-        2. ALWAYS include: Registered Nurse and General Practitioner (unless there's a specific reason not to)
-        3. Add specialists based on:
-        - Specific medical conditions requiring expertise
-        - Functional limitations needing specialized intervention
-        - Psychosocial needs requiring professional support
-        - Safety risks requiring specialized assessment
-        - Care coordination complexity
-        4. Consider team synergy - professionals who complement each other
-        5. Avoid redundancy unless multiple perspectives add value
-        6. Prioritize based on patient's most pressing needs
+    TEAM ASSEMBLY GUIDELINES:
+    … (same guidelines) …
 
-        SELECTION CRITERIA:
-        - CRITICAL needs: What could cause immediate harm if not addressed?
-        - QUALITY OF LIFE: What would most improve daily living?
-        - PREVENTION: What specialists could prevent deterioration?
-        - HOLISTIC CARE: Are physical, mental, and social needs covered?
-        - FEASIBILITY: Is the team size manageable for the patient/family?
+    Return your selection strictly as a valid JSON object. Use double quotes around keys and string values, and do not include any trailing commas. The JSON must have this structure:
 
-        Return your selection as a JSON object with reasoning:
-        {{
-            "selected_team": [
-                {{
-                    "role": "Registered Nurse",
-                    "reasoning": "why this professional is essential for this patient"
-                }},
-                ...
-            ],
-            "team_size": number,
-            "overall_strategy": "brief explanation of team composition strategy",
-            "key_collaborations": ["which professionals need to work closely together"],
-            "potential_gaps": ["any care areas that might need attention later"]
-        }}"""
+    {{
+        "selected_team": [
+            {{
+                "role": "Registered Nurse",
+                "reasoning": "Why this professional is essential for this patient"
+            }},
+            {{
+                "role": "General Practitioner",
+                "reasoning": "Why this professional is essential for this patient"
+            }}
+            // additional team members go here
+        ],
+        "team_size": <number of selected team members>,
+        "overall_strategy": "<brief explanation of team composition strategy>",
+        "key_collaborations": ["list of professionals who must work closely together"],
+        "potential_gaps": ["areas that might need attention later"]
+    }}
+    Do not include any explanation outside the JSON.
+    """
 
     try:
         # Get LLM response
@@ -164,7 +155,12 @@ def select_healthcare_team(
 
         if json_match:
             selection_logs = []
-            selection_data = json.loads(json_match.group())
+            raw_json = json_match.group()
+            try:
+                selection_data = json.loads(raw_json)
+            except json.JSONDecodeError:
+                # try to clean common issues (e.g. trailing commas) and parse again
+                selection_data = json.loads(clean_json_str(raw_json))
 
             # Extract selected roles
             selected_roles = []
@@ -231,6 +227,12 @@ def select_healthcare_team(
 
     # Fallback: Use complexity-based selection if LLM fails
     return select_team_by_complexity(patient_analysis, patient_info)
+
+
+def clean_json_str(json_str: str) -> str:
+    # remove trailing commas before closing braces/brackets
+    json_str = re.sub(r",\s*([}\]])", r"\1", json_str)
+    return json_str
 
 
 def select_team_by_complexity(
