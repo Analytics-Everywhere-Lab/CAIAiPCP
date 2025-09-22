@@ -37,23 +37,30 @@ def configure_assistant() -> list[dict]:
         6. If asked for a specific slot (e.g. "what is the slot_number for 2024-08-20 10:00:00?"), 
            search the tool output JSON for that exact time_slot and return its slot_number exactly as-is.
     """
-    messages = [{
+    messages = [
+        {
             "role": "assistant",
             "content": prompt,
-    }]
+        }
+    ]
     return messages
 
 
 @mcp.tool()
-async def cancel_booked_appointment_for_client(client_id: str, provider_name: str, slot_number: str) -> int:
+async def cancel_booked_appointment_for_client(
+    client_id: str, provider_name: str, slot_number: str
+) -> int:
     """
     Cancels a client appointment with a provider at a specific slot number.
 
     RULES:
     - Inputs (client_id provider_name and slot_number) may come from free-text user input.
     - Ensure that the database is updated"""
-    logging.info(f'Canceling appointment with : {provider_name} for client : {client_id} at slot : {slot_number}')
-    affected = await execute_sql("""
+    logging.info(
+        f"Canceling appointment with : {provider_name} for client : {client_id} at slot : {slot_number}"
+    )
+    affected = await execute_sql(
+        """
                             UPDATE availability
                             SET
                                 client_to_attend = '', is_available = True
@@ -63,17 +70,24 @@ async def cancel_booked_appointment_for_client(client_id: str, provider_name: st
                                 LOWER(provider_name) = ?
                             AND
                                 client_to_attend = ?
-                            """, False, slot_number, provider_name.lower(), client_id)
+                            """,
+        False,
+        slot_number,
+        provider_name.lower(),
+        client_id,
+    )
 
-    logging.info(f'Rows affected : {affected}')
+    logging.info(f"Rows affected : {affected}")
     return affected
 
 
 @mcp.tool()
 async def get_provider_names() -> List[dict]:
     """returns a list of available providers"""
-    logging.info('Getting list of providers ....')
-    res = await execute_sql("SELECT DISTINCT provider_name, role FROM AVAILABILITY", True)
+    logging.info("Getting list of providers ....")
+    res = await execute_sql(
+        "SELECT DISTINCT provider_name, role FROM AVAILABILITY", True
+    )
     providers = [{"provider_name": e["provider_name"], "role": e["role"]} for e in res]
     return providers
 
@@ -81,10 +95,49 @@ async def get_provider_names() -> List[dict]:
 @mcp.tool()
 async def get_provider_roles() -> List[dict]:
     """returns a list of available provider roles"""
-    logging.info('Getting list of provider roles')
+    logging.info("Getting list of provider roles")
     res = await execute_sql("SELECT DISTINCT role FROM AVAILABILITY", True)
     roles = [{"role": e["role"]} for e in res]
     return roles
+
+
+@mcp.tool()
+async def get_available_booking_slots_by_roles(role: str) -> List[dict]:
+    """
+    Returns the 5 earliest available booking slots for a given provider role.
+
+    Output always includes:
+      - slot_number (int, sorted ascending)
+      - provider_name (str)
+      - time_slot (str in 'YYYY-MM-DD HH24:MI:SS')
+
+    The query is case-insensitive on the role name.
+    """
+    logging.info(f"Getting open slots for role {role}")
+    # Query availability by role, ensuring only open slots are considered
+    res = await execute_sql(
+        """
+        SELECT provider_name,
+               slot_number,
+               strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) AS time_slot
+        FROM AVAILABILITY
+        WHERE lower(role) = ?
+          AND is_available = True
+        ORDER BY slot_number ASC
+        LIMIT 5
+        """,
+        True,
+        role.lower(),
+    )
+    # Normalize to list of dicts
+    return [
+        {
+            "provider_name": row["provider_name"],
+            "slot_number": row["slot_number"],
+            "time_slot": row["time_slot"],
+        }
+        for row in res
+    ]
 
 
 @mcp.tool()
@@ -97,21 +150,32 @@ async def get_available_booking_slots_for_provider(provider_name: str) -> List[d
       - provider_name (string)
       - time_slot (string, format 'YYYY-MM-DD HH24:MI:SS')
     """
-    logging.info(f'Getting open slots for {provider_name}')
+    logging.info(f"Getting open slots for {provider_name}")
     res = await execute_sql(
-            """
+        """
             SELECT provider_name, slot_number, strftime('%Y-%m-%d %H:%M:%S', dt_time_slot) as time_slot FROM AVAILABILITY
             WHERE lower(provider_name) = ?
             and
             is_available = True
             order by slot_number asc limit (5)""",
-            True, provider_name.lower())
-    open_slots = [{"provider_name": e["provider_name"],"slot_number": e["slot_number"], "time_slot": e["time_slot"]} for e in res]
+        True,
+        provider_name.lower(),
+    )
+    open_slots = [
+        {
+            "provider_name": e["provider_name"],
+            "slot_number": e["slot_number"],
+            "time_slot": e["time_slot"],
+        }
+        for e in res
+    ]
     return open_slots
 
 
 @mcp.tool()
-async def book_slot_for_provider(provider_name: str, slot_number: str, client_id: str) -> int:
+async def book_slot_for_provider(
+    provider_name: str, slot_number: str, client_id: str
+) -> int:
     """
     Books a client appointment with a provider at a specific slot number.
 
@@ -120,8 +184,11 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
     - Only book the slot if the inputs exactly match a valid slot returned by
       get_available_booking_slots_for_provider.
     - Ensure that the database is updated"""
-    logging.info(f'Booking appointment with : {provider_name} for client : {client_id} at slot: {slot_number}')
-    affected = await execute_sql("""
+    logging.info(
+        f"Booking appointment with : {provider_name} for client : {client_id} at slot: {slot_number}"
+    )
+    affected = await execute_sql(
+        """
                             UPDATE availability
                             SET
                                 client_to_attend = ?, is_available = False
@@ -129,8 +196,13 @@ async def book_slot_for_provider(provider_name: str, slot_number: str, client_id
                                 slot_number = ?
                             AND
                                 LOWER(provider_name) = ?
-                            """, False, client_id, slot_number, provider_name.lower())
-    print(f'Rows affected : {affected}')
+                            """,
+        False,
+        client_id,
+        slot_number,
+        provider_name.lower(),
+    )
+    print(f"Rows affected : {affected}")
     return affected
 
 
@@ -146,9 +218,9 @@ async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
       - provider_name: string
       - time_slot: string in the format 'YYYY-MM-DD HH24:MI:SS'
     """
-    logging.info(f'Getting booked appointments for client id : {client_id}')
+    logging.info(f"Getting booked appointments for client id : {client_id}")
     res = await execute_sql(
-            """
+        """
             SELECT
                 client_to_attend as client_id,
                 slot_number,
@@ -162,23 +234,26 @@ async def list_booked_appointments_for_client(client_id: str) -> List[dict]:
                 slot_number
             asc
                 limit (25)""",
-            True, client_id.lower())
+        True,
+        client_id.lower(),
+    )
     booked_list = [
         {
             "client_id": e["client_id"],
             "slot_number": e["slot_number"],
             "provider_name": e["provider_name"],
-            "time_slot": e["time_slot"]
-        } for e in res
+            "time_slot": e["time_slot"],
+        }
+        for e in res
     ]
-    logging.info(f'Size of booked appointments list: {len(booked_list)}')
+    logging.info(f"Size of booked appointments list: {len(booked_list)}")
     return booked_list
 
 
 if __name__ == "__main__":
     config_json = settings.get_logging_config(settings.LOG_SETTING_FILE)
     logging.config.dictConfig(config_json)
-    logging.info('Running application as main ...')
+    logging.info("Running application as main ...")
 
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = 8000

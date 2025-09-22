@@ -99,3 +99,32 @@ def _fetch_available_slots_for_provider(provider_name: str) -> List[Dict[str, An
     except Exception:
         pass
     return []
+
+
+def _fetch_available_slots_for_roles(role: str) -> List[Dict[str, Any]]:
+    """
+    Fetch the earliest available booking slots for a given provider role.
+
+    This wraps the `get_available_booking_slots_by_roles` tool exposed by the MCP server.
+    It returns a list of dictionaries with keys `slot_number`, `provider_name`, and `time_slot`.
+    """
+    tool = _get_tool("get_available_booking_slots_by_roles")
+    # Prefer synchronous invocation; fallback to asynchronous if necessary
+    try:
+        res = tool.invoke({"role": role})
+    except Exception:
+        res = _run_async_blocking(tool.ainvoke({"role": role}))
+
+    # Normalize output to always return a list
+    try:
+        if isinstance(res, str):
+            parsed = json.loads(res)
+            return parsed.get("result", parsed) if isinstance(parsed, dict) else parsed
+        if isinstance(res, dict) and "result" in res:
+            return res["result"]
+        if isinstance(res, list):
+            return res
+    except Exception:
+        pass
+    return []
+

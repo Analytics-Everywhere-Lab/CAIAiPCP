@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 import gradio as gr
 from graph import create_care_plan_graph
@@ -792,7 +793,7 @@ class CarePlanGradioInterface:
                     yield self._yield_ui(
                         "## Validating Arguments and Finalizing Care Plan...",
                         updated_history,
-                        msg_visible=False,
+                        msg_visible=True,
                         refs=updated_refs,
                     )
                 return
@@ -992,12 +993,21 @@ class CarePlanGradioInterface:
                 if not items:
                     md.append(f"| {provider} | *(no slots)* |")
                     continue
-                # Show first 3 to keep it tidy
+
+                # Show first 3 slots to keep it tidy
                 previews = []
                 for itm in items[:3]:
+                    # If the returned slot is a JSON string, parse it into a dict
+                    if isinstance(itm, str):
+                        try:
+                            itm = json.loads(itm)
+                        except json.JSONDecodeError:
+                            itm = {}  # fallback to empty dict if parsing fails
+
                     ts = itm.get("time_slot") or ""
                     sn = itm.get("slot_number")
                     previews.append(f"`#{sn} — {ts}`" if sn is not None else f"`{ts}`")
+
                 md.append(f"| {provider} | " + "<br>".join(previews) + " |")
 
         history[processing_msg_idx] = {
@@ -1099,7 +1109,7 @@ class CarePlanGradioInterface:
                         for updated_history, refs in scheduling_updates:
                             yield updated_history, refs
 
-                        if node_state.get("scheduling_slots") is not None:
+                        if "scheduling_slots" in node_state:
                             # mark scheduling as complete and set the final state here
                             nodes_completed.add("scheduling")
                             final_state = node_state

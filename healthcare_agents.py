@@ -46,7 +46,7 @@ class HealthcareAgent:
 HEALTHCARE_AGENTS = {
     HealthcareRole.NURSE: HealthcareAgent(
         role=HealthcareRole.NURSE,
-        name="nurse",
+        name="Registered Nurse",
         expertise_areas=[
             "medication management",
             "wound care",
@@ -64,7 +64,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.GENERAL_PRACTITIONER: HealthcareAgent(
         role=HealthcareRole.GENERAL_PRACTITIONER,
-        name="general_practitioner",
+        name="General Practitioner",
         expertise_areas=[
             "comprehensive medical care",
             "chronic disease management",
@@ -82,7 +82,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.GERIATRICIAN: HealthcareAgent(
         role=HealthcareRole.GERIATRICIAN,
-        name="geriatrician",
+        name="Geriatrician",
         expertise_areas=[
             "age-related conditions",
             "polypharmacy management",
@@ -100,7 +100,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.PHYSICAL_THERAPIST: HealthcareAgent(
         role=HealthcareRole.PHYSICAL_THERAPIST,
-        name="physical_therapist",
+        name="Physical Therapist",
         expertise_areas=[
             "mobility assessment",
             "strength training",
@@ -118,7 +118,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.OCCUPATIONAL_THERAPIST: HealthcareAgent(
         role=HealthcareRole.OCCUPATIONAL_THERAPIST,
-        name="occupational_therapist",
+        name="Occupational Therapist",
         expertise_areas=[
             "activities of daily living",
             "home safety assessment",
@@ -136,7 +136,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.SOCIAL_WORKER: HealthcareAgent(
         role=HealthcareRole.SOCIAL_WORKER,
-        name="social_worker",
+        name="Social Worker",
         expertise_areas=[
             "community resources",
             "family dynamics",
@@ -154,7 +154,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.PSYCHIATRIST: HealthcareAgent(
         role=HealthcareRole.PSYCHIATRIST,
-        name="psychiatrist",
+        name="Psychiatrist",
         expertise_areas=[
             "mental health assessment",
             "dementia evaluation",
@@ -172,7 +172,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.NUTRITIONIST: HealthcareAgent(
         role=HealthcareRole.NUTRITIONIST,
-        name="nutritionist",
+        name="Nutritionist",
         expertise_areas=[
             "nutritional assessment",
             "special diets",
@@ -190,7 +190,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.HOME_HEALTH_AIDE: HealthcareAgent(
         role=HealthcareRole.HOME_HEALTH_AIDE,
-        name="home_health_aide",
+        name="Home Health Aide",
         expertise_areas=[
             "personal care assistance",
             "daily routine support",
@@ -208,7 +208,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.PHARMACIST: HealthcareAgent(
         role=HealthcareRole.PHARMACIST,
-        name="pharmacist",
+        name="Pharmacist",
         expertise_areas=[
             "medication interactions",
             "dosing optimization",
@@ -226,7 +226,7 @@ HEALTHCARE_AGENTS = {
     ),
     HealthcareRole.CARE_COORDINATOR: HealthcareAgent(
         role=HealthcareRole.CARE_COORDINATOR,
-        name="care_coordinator",
+        name="Care Coordinator",
         expertise_areas=[
             "care plan coordination",
             "insurance navigation",

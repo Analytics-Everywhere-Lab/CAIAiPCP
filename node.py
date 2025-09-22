@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Set
-from mcp_utils import _fetch_available_slots_for_provider
+from mcp_utils import _fetch_available_slots_for_roles
 from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState
 from llm_caller import call_llm, call_llm_stream
@@ -222,13 +222,13 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
             if state.get("enable_streaming", False):
                 support_response = ""
-                for chunk in call_llm_stream(support_prompt, temperature=0.7):
+                for chunk in call_llm_stream(support_prompt, temperature=0.7, max_tokens=256):
                     support_response += chunk
                     state["current_argument_stream"] = (
                         f"{agent.name}: {support_response}"
                     )
             else:
-                support_response = call_llm(support_prompt, temperature=0.7)
+                support_response = call_llm(support_prompt, temperature=0.7, max_tokens=256)
 
             # Agent-specific prompt for challenging arguments
             attack_prompt = f"""{agent.get_perspective_prompt()}
@@ -247,13 +247,13 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
             if state.get("enable_streaming", False):
                 attack_response = ""
-                for chunk in call_llm_stream(attack_prompt, temperature=0.7):
+                for chunk in call_llm_stream(attack_prompt, temperature=0.7, max_tokens=256):
                     attack_response += chunk
                     state["current_argument_stream"] = (
                         f"{agent.name}: {attack_response}"
                     )
             else:
-                attack_response = call_llm(attack_prompt, temperature=0.7)
+                attack_response = call_llm(attack_prompt, temperature=0.7, max_tokens=256)
 
             # Parse and tag arguments with agent information
             for line in support_response.split("\n"):
@@ -690,14 +690,14 @@ def care_plan_reviser(state: GraphState) -> GraphState:
 
     if state.get("enable_streaming", False):
         response_chunks = []
-        for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=1536):
+        for chunk in call_llm_stream(prompt, temperature=0.8, max_tokens=1024):
             response_chunks.append(chunk)
             state["streaming_chunk"] = chunk
             state["partial_response"] = "".join(response_chunks)
 
         response = "".join(response_chunks)
     else:
-        response = call_llm(prompt, temperature=0.6, max_tokens=1536)
+        response = call_llm(prompt, temperature=0.8, max_tokens=1024)
 
     cited_refs = re.findall(r"\[REF-(\d+)\]", response)
     cited_doc_ids = set(int(ref) for ref in cited_refs)
@@ -814,12 +814,12 @@ def rag_retrieval(state: GraphState) -> GraphState:
 
     if state.get("enable_streaming", False):
         queries_text = ""
-        for chunk in call_llm_stream(prompt, temperature=0.3):
+        for chunk in call_llm_stream(prompt, temperature=0.3, max_tokens=256):
             queries_text += chunk
             state["rag_progress"] = f"Generating search queries:\n{queries_text}"
         queries = queries_text.strip().split("\n")
     else:
-        queries = call_llm(prompt, temperature=0.3).strip().split("\n")
+        queries = call_llm(prompt, temperature=0.3, max_tokens=256).strip().split("\n")
 
     state["search_queries"] = queries
 
@@ -881,7 +881,7 @@ def scheduling(state: Dict[str, Any]) -> Dict[str, Any]:
         if not provider_name:
             continue
         try:
-            slots = _fetch_available_slots_for_provider(provider_name)
+            slots = _fetch_available_slots_for_roles(provider_name)
         except Exception as e:
             print(f"[scheduling] MCP call failed for {provider_name}: {e}")
             slots = []
