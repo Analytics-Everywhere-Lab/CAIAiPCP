@@ -344,6 +344,45 @@ class CarePlanGradioInterface:
             }
         )
 
+        # Message 7: Scheduling
+        sched_summary = final_state.get("scheduling_summary")
+        sched_slots   = final_state.get("scheduling_slots") or {}
+        if sched_summary or sched_slots:
+            # build markdown
+            lines = []
+            lines.append("## 📅 Scheduling — Provider Availability\n")
+            if sched_summary:
+                lines.append(sched_summary.strip())
+                lines.append("")
+            if not sched_slots:
+                lines.append("> No availability returned.")
+            else:
+                lines.append("| Provider | Next slots |")
+                lines.append("|---|---|")
+                for provider, items in sched_slots.items():
+                    if not items:
+                        lines.append(f"| {provider} | *(no slots)* |")
+                        continue
+                    previews = []
+                    for itm in items[:3]:
+                        if isinstance(itm, str):
+                            try:
+                                itm = json.loads(itm)
+                            except json.JSONDecodeError:
+                                itm = {}
+                        ts = itm.get("time_slot") or ""
+                        sn = itm.get("slot_number")
+                        previews.append(f"`#{sn} — {ts}`" if sn is not None else f"`{ts}`")
+                    lines.append(f"| {provider} | " + " ".join(previews) + " |")
+
+            messages.append({
+                "role": "assistant",
+                "content": "\n".join(lines),
+                "metadata": {
+                    "title": f"📅 Provider Availability ({len(sched_slots)} providers)"
+                }
+            })
+
         return messages, ref_data
 
     def process_user_input_msg(self, message):
@@ -793,7 +832,7 @@ class CarePlanGradioInterface:
                     yield self._yield_ui(
                         "## Validating Arguments and Finalizing Care Plan...",
                         updated_history,
-                        msg_visible=True,
+                        msg_visible=False,
                         refs=updated_refs,
                     )
                 return
