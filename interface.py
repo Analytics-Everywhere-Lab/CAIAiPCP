@@ -173,7 +173,7 @@ class CarePlanGradioInterface:
             for agent_name, agent_args in state["agent_arguments_tracking"].items():
                 support_count = sum(1 for arg in agent_args if arg["type"] == "support")
                 attack_count = sum(
-                    1 for arg in agent_args if arg["type"] == "challenge"
+                    1 for arg in agent_args if arg["type"] == "attack"
                 )
                 display_text += f"- **{agent_name}**: {support_count} support, {attack_count} challenge\n"
             display_text += "\n"
@@ -242,7 +242,7 @@ class CarePlanGradioInterface:
         clean_recommendations = re.sub(ref_pattern, "", recommendations)
 
         recommendations_content = (
-            f"""## 📝 Care Plan Recommendations {clean_recommendations}"""
+            f"""## 📝 Care Plan Recommendations {clean_recommendations}\n"""
         )
 
         messages.append({"role": "assistant", "content": recommendations_content})
@@ -263,7 +263,6 @@ class CarePlanGradioInterface:
                     ref = ref_data[ref_id]
                     citation_text = f"""**[REF-{ref_id}]**
                     📍 Search Query: {ref['search_query']}
-                    📊 Relevance Score: {ref['similarity_score']:.1%}
                     {'-' * 40}
                     {ref['full_content']}"""
 
@@ -669,7 +668,7 @@ class CarePlanGradioInterface:
                         attack_count = sum(
                             1
                             for arg in agent_args
-                            if arg["type"] in ("attack", "challenge")
+                            if arg["type"] == "attack"
                         )
                         team_logs_content += f"- {agent_name}: {support_count} support, {attack_count} challenge arguments\n"
 
