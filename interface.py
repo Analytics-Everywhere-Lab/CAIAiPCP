@@ -185,7 +185,8 @@ class CarePlanGradioInterface:
         display_text += (
             "- ➕ Type **`add support [option_number] [argument]`** to add support\n"
         )
-        display_text += "- ⚠️ Type **`add challenge [option_number] [argument]`** to add challenge\n\n"
+        display_text += "- ⚠️ Type **`add challenge [option_number] [argument]`** to add challenge\n"
+        display_text += "- 📝 Type **`modify [index] [new_content]`** to edit an argument\n\n"
         display_text += "💡 **Note:** The AI selected this specific team based on the patient's unique needs and complexity.\n"
 
         return display_text
@@ -427,8 +428,8 @@ class CarePlanGradioInterface:
             try:
                 parts = message.split(maxsplit=3)
                 arg_type = parts[1]
-                option_idx = int(parts) - 1
-                arg_content = parts
+                option_idx = int(parts[2]) - 1
+                arg_content = parts[3]
                 if 0 <= option_idx < len(self.current_state["handling_options"]):
                     new_arg = Argument(
                         content=arg_content,
@@ -451,9 +452,30 @@ class CarePlanGradioInterface:
                     "content": "Invalid add command. Use format: 'add [support/challenge] [option_number] [argument text]'",
                 }
 
+        if msg.startswith("modify "):
+            try:
+                parts = message.split(maxsplit=2)
+                idx = int(parts[1])
+                new_content = parts[2]
+                if 0 <= idx < len(self.current_state["arguments"]):
+                    old_content = self.current_state["arguments"][idx].content
+                    self.current_state["arguments"][idx].content = new_content
+                    response = f"📝 Modified argument {idx}:\n**Old:** {old_content}\n**New:** {new_content}\n\n"
+                    response += self.format_arguments_display(self.current_state)
+                    return {"role": "assistant", "content": response}
+                return {
+                    "role": "assistant",
+                    "content": "Invalid argument index. Please check the numbers in square brackets.",
+                }
+            except Exception:
+                return {
+                    "role": "assistant",
+                    "content": "Invalid modify command. Use format: 'modify [index] [new content]'",
+                }
+
         return {
             "role": "assistant",
-            "content": "Invalid command. Please use 'accept', 'remove [index]', or 'add [support/challenge] [option] [text]'",
+            "content": "Invalid command. Please use 'accept', 'remove [index]', 'modify [index] [text]', or 'add [support/challenge] [option] [text]'",
         }
 
 

@@ -4,3 +4,8 @@ mcp/db/aip.db
 mcp/docker/data/
 **/.DS_Store
 .ipynb_checkpoints
+frontend/node_modules
+.venv
+.gradio
+node-v20.11.1-linux-x64
+chroma_db/*

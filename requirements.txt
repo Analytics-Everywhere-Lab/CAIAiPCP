@@ -1,9 +1,12 @@
 chromadb==1.0.19
 datasets==4.0.0
-gradio==5.42.0
+fastapi==0.110.1
 langgraph==0.6.5
+pydantic>=2.7.4
 requests==2.32.4
 sentence_transformers==5.1.0
+sse-starlette==2.0.0
 torch==2.7.1
 tqdm==4.67.1
 transformers==4.53.2
+uvicorn==0.29.0
