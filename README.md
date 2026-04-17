@@ -32,6 +32,12 @@ python rag/indexer.py
 python main.py
 ```
 
+
+## Demo
+
+![Demo](media/demo.gif)
+
+
 ## Citation
 
 If you use or reference this work in a scientific publication,
