@@ -32,6 +32,21 @@ python rag/indexer.py
 python main.py
 ```
 
+## Citation
+
+If you use or reference this work in a scientific publication,
+we would appreciate that you use the following citations:
+
+```
+@article{nguyen2026position,
+  title={Position: Multi-Agent Algorithmic Care Systems Demand Contestability for Trustworthy AI},
+  author={Nguyen, Truong Thanh Hung and Fournier, H{\'e}l{\`e}ne and Jackson, Piper and Itoh, Makoto and Freeman, Shannon and Richard, Rene and Cao, Hung},
+  journal={arXiv preprint arXiv:2603.20595},
+  year={2026}
+}
+```
+
+
 ## References
 
 <https://github.com/anurag-mishra899/Multi-Agents-Appointment-Booking/blob/main/Back-End/tools/tools.py>
