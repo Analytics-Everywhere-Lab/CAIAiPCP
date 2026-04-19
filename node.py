@@ -1,8 +1,16 @@
 from typing import Any, Dict, List, Set
 from mcp_utils import _fetch_available_slots_for_roles
 from rag.vector_db import MedicalVectorDB
-from state import Argument, GraphState
+from state import Argument, GraphState, active_progress
 from llm_caller import call_llm, call_llm_stream
+
+def _report_progress(state: GraphState, key: str, msg: str):
+    state[key] = msg
+    tid = state.get("thread_id")
+    if tid:
+        if tid not in active_progress:
+            active_progress[tid] = {}
+        active_progress[tid][key] = msg
 from utils import calculate_decision_confidence
 from agent_selection import (
     get_agents_for_condition_llm,
@@ -11,13 +19,43 @@ from agent_selection import (
 )
 import re
 
+def determine_severity_from_patient_info(patient_info: str) -> str:
+    prompt = f"""You are a medical triage assistant. Based on this patient information, assess the severity of their condition as one of: Low, Moderate, High, or Very High.
+    Patient Info: {patient_info}
+    Output ONLY the severity level word(s)."""
+    response = call_llm(prompt, temperature=0.1, max_tokens=10)
+    res = response.strip()
+    for s in ["Very High", "High", "Moderate", "Low"]:
+        if s.lower() in res.lower():
+            return s
+    return "Moderate"
 
+def get_max_tokens_for_severity(base_tokens: int, severity: str) -> int:
+    s = (severity or "moderate").lower()
+    if s == "low": return max(8000, int(base_tokens * 1.25))
+    if s == "moderate": return max(10000, int(base_tokens * 1.5))
+    if "very high" in s: return max(15000, int(base_tokens * 2.5))
+    if "high" in s: return max(12000, int(base_tokens * 2))
+    return base_tokens
 def care_plan_generator(state: GraphState) -> GraphState:
     """First LLM: Generate handling options based on patient information"""
+    if not state.get("severity") or state.get("severity").lower() == "default":
+        if state.get("enable_streaming", False):
+            _report_progress(state, "current_sub_step", "🔍 Analyzing patient condition to determine severity level...")
+        state["severity"] = determine_severity_from_patient_info(state["patient_info"])
+        print(f"🤖 AI determined severity: {state['severity']}")
+        if state.get("enable_streaming", False):
+            _report_progress(state, "current_sub_step", f"📊 Severity assessed: {state['severity']} — configuring generation parameters...")
+
     # Include RAG context if available
     context_section = ""
     if state.get("rag_context"):
         context_section = f"\n{state['rag_context']}\n"
+        if state.get("enable_streaming", False):
+            _report_progress(state, "current_sub_step", "📚 Integrating retrieved medical knowledge into context...")
+
+    if state.get("enable_streaming", False):
+        _report_progress(state, "current_sub_step", "🧠 Generating personalised care handling options...")
 
     prompt = f"""You are an expert geriatric care planner. Based on the following patient information and relevant medical knowledge provided,
     generate 1-2 specific handling options for their care plan in aging-in-place context.
@@ -34,20 +72,25 @@ def care_plan_generator(state: GraphState) -> GraphState:
     
     Focus on practical, implementable options that support independent living while ensuring safety and quality of life."""
 
+    max_toks = get_max_tokens_for_severity(2048, state["severity"])
     if state.get("enable_streaming", False):
         response_chunks = []
-        for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=1024):
+        for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=max_toks):
             response_chunks.append(chunk)
-            state["options_generation_progress"] = "".join(response_chunks)
+            partial = "".join(response_chunks)
+            _report_progress(state, "options_generation_progress", partial)
+            _report_progress(state, "current_stream_text", partial)
         response = "".join(response_chunks)
     else:
-        response = call_llm(prompt, temperature=0.6, max_tokens=1024)
+        response = call_llm(prompt, temperature=0.6, max_tokens=max_toks)
 
     # Parse handling options
     options = []
     for line in response.split("\n"):
-        if line.strip().startswith("Option"):
-            option_text = line.split(":", 1)[1].strip() if ":" in line else line
+        clean_line = line.strip().lstrip('*#- ')
+        if clean_line.startswith("Option") or clean_line.startswith("**Option"):
+            option_text = clean_line.split(":", 1)[1].strip() if ":" in clean_line else clean_line
+            option_text = option_text.replace("**", "").strip()
             if option_text:
                 options.append(option_text)
 
@@ -75,40 +118,43 @@ def argument_generator(state: GraphState) -> GraphState:
 
     for i, option in enumerate(state["handling_options"]):
         if state.get("enable_streaming", False):
-            state["argument_generation_progress"] = (
+            _report_progress(state, "argument_generation_progress", (
                 f"Generating arguments for option {i+1}/{len(state['handling_options'])}: {option[:50]}..."
-            )
+            ))
 
         # Generate supporting arguments
         support_prompt = f"""
-            Generate 2 strong supporting arguments for the following elderly care handling option:
+            Generate 1 strong supporting argument for the following elderly care handling option:
             {rag_context}
             Option: {option}
             Provide arguments that highlight benefits, feasibility, and positive outcomes.
             Format each argument on a new line starting with "Support:"."""
 
+        max_toks = get_max_tokens_for_severity(1024, state["severity"])
         if state.get("enable_streaming", False):
             support_response = ""
-            for chunk in call_llm_stream(support_prompt, temperature=0.8):
+            for chunk in call_llm_stream(support_prompt, temperature=0.8, max_tokens=max_toks):
                 support_response += chunk
                 state["current_argument_stream"] = support_response
+                _report_progress(state, "current_stream_text", support_response)
         else:
-            support_response = call_llm(support_prompt, temperature=0.8)
+            support_response = call_llm(support_prompt, temperature=0.8, max_tokens=max_toks)
 
         # Generate attacking arguments
         attack_prompt = f"""
-            Generate 2 critical arguments against the following elderly care handling option:
+            Generate 1 critical argument against the following elderly care handling option:
             Option: {option}        
             Provide arguments that highlight potential risks, challenges, or limitations.
             Format each argument on a new line starting with "Challenge:"."""
 
         if state.get("enable_streaming", False):
             attack_response = ""
-            for chunk in call_llm_stream(attack_prompt, temperature=0.8):
+            for chunk in call_llm_stream(attack_prompt, temperature=0.8, max_tokens=max_toks):
                 attack_response += chunk
                 state["current_argument_stream"] = attack_response
+                _report_progress(state, "current_stream_text", attack_response)
         else:
-            attack_response = call_llm(attack_prompt, temperature=0.8)
+            attack_response = call_llm(attack_prompt, temperature=0.8, max_tokens=max_toks)
 
         # Parse arguments
         for line in support_response.split("\n"):
@@ -156,6 +202,9 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
     print(f"Generating arguments for options: {state['handling_options']}")
     print("\n🤖 Using AI to analyze patient and select optimal healthcare team...")
 
+    if state.get("enable_streaming", False):
+        _report_progress(state, "current_sub_step", "🤖 AI selecting optimal healthcare team for this patient profile...")
+
     # Check if user has specified custom team requirements
     custom_requirements = state.get("custom_team_requirements", None)
 
@@ -179,6 +228,10 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
     )
     print(f"📝 Rationale: {team_explanation}\n")
 
+    if state.get("enable_streaming", False):
+        names = ", ".join(agent.name for agent in healthcare_team)
+        _report_progress(state, "current_sub_step", f"👥 Team assembled: {names}")
+
     # Store agent assignments for tracking
     agent_arguments_tracking = {}
 
@@ -190,20 +243,24 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
         print(f"\nOption {i+1}: {option}")
 
         if state.get("enable_streaming", False):
-            state["argument_generation_progress"] = (
+            _report_progress(state, "current_sub_step",
+                f"💭 Option {i+1}/{len(state['handling_options'])}: Gathering multi-disciplinary perspectives...")
+            _report_progress(state, "argument_generation_progress", (
                 f"Option {i+1}/{len(state['handling_options'])}: Gathering perspectives from {len(healthcare_team)} healthcare professionals..."
-            )
+            ))
 
         option_arguments = []
 
         # Each agent provides their perspective
         for agent_idx, agent in enumerate(healthcare_team):
             if state.get("enable_streaming", False):
-                state["argument_generation_progress"] = (
-                    f"Option {i+1}: [{agent_idx}] {agent.name} ({agent.role.value}) is analyzing..."
-                )
+                _report_progress(state, "current_sub_step",
+                    f"🔬 {agent.name} analyzing option {i+1}")
+                _report_progress(state, "argument_generation_progress", (
+                    f"Option {i+1}: [{agent_idx+1}/{len(healthcare_team)}] {agent.name} is analyzing..."
+                ))
 
-            # Agent-specific prompt for supporting   arguments
+            # Agent-specific prompt for supporting arguments
             support_prompt = f"""{agent.get_perspective_prompt()}
             
                 {rag_context}
@@ -220,15 +277,15 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                 Format each argument on a new line starting with "Support:"
                 Be specific about benefits from your professional viewpoint."""
 
+            max_toks = get_max_tokens_for_severity(1024, state["severity"])
             if state.get("enable_streaming", False):
                 support_response = ""
-                for chunk in call_llm_stream(support_prompt, temperature=0.7, max_tokens=256):
+                for chunk in call_llm_stream(support_prompt, temperature=0.7, max_tokens=max_toks):
                     support_response += chunk
-                    state["current_argument_stream"] = (
-                        f"{agent.name}: {support_response}"
-                    )
+                    state["current_argument_stream"] = f"{agent.name}: {support_response}"
+                    _report_progress(state, "current_stream_text", f"{agent.name}: {support_response}")
             else:
-                support_response = call_llm(support_prompt, temperature=0.7, max_tokens=256)
+                support_response = call_llm(support_prompt, temperature=0.7, max_tokens=max_toks)
 
             # Agent-specific prompt for challenging arguments
             attack_prompt = f"""{agent.get_perspective_prompt()}
@@ -247,18 +304,18 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
             if state.get("enable_streaming", False):
                 attack_response = ""
-                for chunk in call_llm_stream(attack_prompt, temperature=0.7, max_tokens=256):
+                for chunk in call_llm_stream(attack_prompt, temperature=0.7, max_tokens=max_toks):
                     attack_response += chunk
-                    state["current_argument_stream"] = (
-                        f"{agent.name}: {attack_response}"
-                    )
+                    state["current_argument_stream"] = f"{agent.name}: {attack_response}"
+                    _report_progress(state, "current_stream_text", f"{agent.name}: {attack_response}")
             else:
-                attack_response = call_llm(attack_prompt, temperature=0.7, max_tokens=256)
+                attack_response = call_llm(attack_prompt, temperature=0.7, max_tokens=max_toks)
 
             # Parse and tag arguments with agent information
             for line in support_response.split("\n"):
-                if line.strip().startswith("Support:"):
-                    arg_content = line.replace("Support:", "").strip()
+                clean_line = line.strip().lstrip('*#- ')
+                if clean_line.startswith("Support") and ":" in clean_line:
+                    arg_content = clean_line.split(":", 1)[1].replace("**", "").strip()
                     if arg_content:
                         tagged_content = f"[{agent.role.value}] {arg_content}"
                         arg = Argument(
@@ -282,12 +339,12 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                         )
 
             for line in attack_response.split("\n"):
-                if line.strip().startswith("Challenge:") or line.strip().startswith(
-                    "Attack:"
-                ):
-                    arg_content = (
-                        line.replace("Challenge:", "").replace("Attack:", "").strip()
-                    )
+                clean_line = line.strip().lstrip('*#- ')
+                if clean_line.startswith("Challenge") or clean_line.startswith("Attack"):
+                    if ":" in clean_line:
+                        arg_content = clean_line.split(":", 1)[1].replace("**", "").strip()
+                    else:
+                        arg_content = clean_line.replace("Challenge", "").replace("Attack", "").replace("**", "").strip()
                     if arg_content:
                         tagged_content = f"[{agent.role.value}] {arg_content}"
                         arg = Argument(
@@ -354,7 +411,9 @@ def argument_validator(state: GraphState) -> GraphState:
 
     for i, arg in enumerate(state["arguments"]):
         if state.get("enable_streaming", False):
-            state["validation_progress"] = f"Validating argument {i+1}/{total_args}"
+            _report_progress(state, "validation_progress", f"Validating argument {i+1}/{total_args}")
+            _report_progress(state, "current_sub_step",
+                f"✅ Argument {i+1}/{total_args}: evaluating factual accuracy & clinical relevance...")
         # First validation pass
         initial_prompt = f"""
             You are an expert analyst evaluating the validity and relevance of arguments 
@@ -378,15 +437,17 @@ def argument_validator(state: GraphState) -> GraphState:
             Response format: "Validity Score: X.XX"
             Include a brief explanation."""
 
+        max_toks = get_max_tokens_for_severity(256, state["severity"])
         if state.get("enable_streaming", False):
             initial_response = ""
             for chunk in call_llm_stream(
-                initial_prompt, temperature=0.3, max_tokens=256
+                initial_prompt, temperature=0.3, max_tokens=max_toks
             ):
                 initial_response += chunk
                 state["current_validation_stream"] = initial_response
+                _report_progress(state, "current_stream_text", initial_response)
         else:
-            initial_response = call_llm(initial_prompt, temperature=0.3, max_tokens=256)
+            initial_response = call_llm(initial_prompt, temperature=0.3, max_tokens=max_toks)
 
         # Extract initial validity score
         initial_validity_score = 0.5  # default
@@ -412,15 +473,16 @@ def argument_validator(state: GraphState) -> GraphState:
                 Argument: {arg.content}       
                 Create ONE focused search query that would help validate or refute this argument:"""
 
+            sq_toks = get_max_tokens_for_severity(128, state["severity"])
             if state.get("enable_streaming", False):
                 search_query = ""
                 for chunk in call_llm_stream(
-                    search_query_prompt, temperature=0.2, max_tokens=128
+                    search_query_prompt, temperature=0.2, max_tokens=sq_toks
                 ):
                     search_query += chunk
             else:
                 search_query = call_llm(
-                    search_query_prompt, temperature=0.2, max_tokens=128
+                    search_query_prompt, temperature=0.2, max_tokens=sq_toks
                 ).strip()
 
             # Retrieve additional evidence
@@ -474,11 +536,16 @@ def argument_validator(state: GraphState) -> GraphState:
                 Response format: "Updated Validity Score: X.XX"
                 Explain how the evidence influenced your assessment."""
 
-                revalidation_response = ""
-                for chunk in call_llm_stream(
-                    revalidation_prompt, temperature=0.3, max_tokens=512
-                ):
-                    revalidation_response += chunk
+                rv_toks = get_max_tokens_for_severity(512, state["severity"])
+                if state.get("enable_streaming", False):
+                    revalidation_response = ""
+                    for chunk in call_llm_stream(
+                        revalidation_prompt, temperature=0.3, max_tokens=rv_toks
+                    ):
+                        revalidation_response += chunk
+                        _report_progress(state, "current_stream_text", revalidation_response)
+                else:
+                    revalidation_response = call_llm(revalidation_prompt, temperature=0.3, max_tokens=rv_toks)
 
                 # Extract updated validity score
                 updated_validity_score = initial_validity_score  # fallback to initial
@@ -546,11 +613,16 @@ def argument_validator(state: GraphState) -> GraphState:
                 Does this evidence support the high validity score? 
                 Response: "Confirmed Score: X.XX" (can be same or adjusted)"""
 
-                verification_response = ""
-                for chunk in call_llm_stream(
-                    verification_prompt, temperature=0.2, max_tokens=128
-                ):
-                    verification_response += chunk
+                vf_toks = get_max_tokens_for_severity(1280, state["severity"])
+                if state.get("enable_streaming", False):
+                    verification_response = ""
+                    for chunk in call_llm_stream(
+                        verification_prompt, temperature=0.2, max_tokens=vf_toks
+                    ):
+                        verification_response += chunk
+                        _report_progress(state, "current_stream_text", verification_response)
+                else:
+                    verification_response = call_llm(verification_prompt, temperature=0.2, max_tokens=vf_toks)
 
                 # Extract confirmed score
                 confirmed_score = initial_validity_score
@@ -684,20 +756,28 @@ def care_plan_reviser(state: GraphState) -> GraphState:
         2. Specific implementation steps for each recommended option
         3. Risk mitigation strategies for identified concerns
         4. Evidence-based justification with references to medical knowledge using [REF-X] format
-        
+
         IMPORTANT: Cite relevant medical knowledge using [REF-X] where X is the reference number.
-        Consider the strength of arguments (validity scores) in your recommendations."""
+        Consider the strength of arguments (validity scores) in your recommendations.
+        DO NOT use any emoji, icons, or special symbols anywhere in your response. Use plain text only."""
 
     if state.get("enable_streaming", False):
-        response_chunks = []
-        for chunk in call_llm_stream(prompt, temperature=0.8, max_tokens=1024):
+        _report_progress(state, "current_sub_step", "📊 Organizing validated arguments by evidence strength...")
+
+    cp_toks = get_max_tokens_for_severity(2048, state["severity"])
+    if state.get("enable_streaming", False):
+        _report_progress(state, "current_sub_step", "✍️ Drafting comprehensive evidence-based care plan...")
+        response_chunks = []    
+        for chunk in call_llm_stream(prompt, temperature=0.8, max_tokens=cp_toks):
             response_chunks.append(chunk)
+            partial = "".join(response_chunks)
             state["streaming_chunk"] = chunk
-            state["partial_response"] = "".join(response_chunks)
+            state["partial_response"] = partial
+            _report_progress(state, "current_stream_text", partial)
 
         response = "".join(response_chunks)
     else:
-        response = call_llm(prompt, temperature=0.8, max_tokens=1024)
+        response = call_llm(prompt, temperature=0.8, max_tokens=cp_toks)
 
     cited_refs = re.findall(r"\[REF-(\d+)\]", response)
     cited_doc_ids = set(int(ref) for ref in cited_refs)
@@ -814,12 +894,12 @@ def rag_retrieval(state: GraphState) -> GraphState:
 
     if state.get("enable_streaming", False):
         queries_text = ""
-        for chunk in call_llm_stream(prompt, temperature=0.3, max_tokens=256):
+        for chunk in call_llm_stream(prompt, temperature=0.3):
             queries_text += chunk
-            state["rag_progress"] = f"Generating search queries:\n{queries_text}"
+            _report_progress(state, "rag_progress", f"Generating search queries:\n{queries_text}")
         queries = queries_text.strip().split("\n")
     else:
-        queries = call_llm(prompt, temperature=0.3, max_tokens=256).strip().split("\n")
+        queries = call_llm(prompt, temperature=0.3).strip().split("\n")
 
     state["search_queries"] = queries
 

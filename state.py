@@ -21,6 +21,7 @@ class GraphState(TypedDict):
     
     # Core patient and care planning data
     patient_info: str
+    severity: str
     handling_options: List[str]
     arguments: List[Argument]
     validated_arguments: List[Argument]
@@ -63,3 +64,8 @@ class GraphState(TypedDict):
     scheduling_query: Optional[Dict[str, Any]]  # optional filter, e.g., date range
     scheduling_slots: Optional[Dict[str, List[Dict[str, Any]]]]  # provider_name -> slot dicts
     scheduling_summary: Optional[str]
+    
+    thread_id: Optional[str]
+
+# Global tracker for progress updates bypassing LangGraph state copying
+active_progress = {}

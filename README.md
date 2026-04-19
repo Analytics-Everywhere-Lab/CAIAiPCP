@@ -6,19 +6,44 @@ This repository contains code for the CAIAiPCP project, which focuses on using c
 
 To set up the project, follow these steps:
 
-1. Set up Huggingface CLI to use the `HuggingFaceTB/SmolLM3-3B` model:
-
+1. **Install Ollama**
+   To support local model hosting, [install Ollama](https://ollama.com/) on your machine.
+   Once installed, run and serve the `gemma` model:
    ```bash
-   huggingface-cli login
+   ollama run gemma4:latest
    ```
+   The application communicates with Ollama locally via `http://localhost:11434`.
 
-2. Install the required Python packages:
+2. Create your virtual environment and install the required Python packages:
 
    ```bash
    pip install -r requirements.txt
    ```
 
-## Usage
+## Frontend Setup
+
+1. Navigate to the frontend directory:
+
+   ```bash
+   cd frontend
+   ```
+
+2. Install the required npm packages:
+
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+> [!NOTE]
+> The backend server must be running on `http://localhost:8001` for the frontend to communicate with it.
+
+## Setup
 
 1. Setup the vector database with MedicalRAG dataset:
 

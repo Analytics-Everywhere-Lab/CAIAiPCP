@@ -1,120 +1,83 @@
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from env_config import HUGGINGFACE_MODEL_NAME, DEVICE
+import json
+import requests
+import sys
+from env_config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 
-# Singleton pattern for model loading
-class ModelManager:
-    _instance = None
-    _model = None
-    _tokenizer = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def get_model_and_tokenizer(self):
-        if self._model is None or self._tokenizer is None:
-            print(f"Loading model {HUGGINGFACE_MODEL_NAME} for the first time...")
-            self._tokenizer = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_NAME)
-            self._model = AutoModelForCausalLM.from_pretrained(
-                HUGGINGFACE_MODEL_NAME
-            ).to(DEVICE)
-            print("Model loaded successfully!")
-        return self._model, self._tokenizer
-
-
-# Create singleton instance
-model_manager = ModelManager()
-
-
-def call_huggingface_llm(
-    prompt: str, temperature: float = 0.7, max_tokens: int = 512
+def call_llm(
+    prompt: str, temperature: float = 0.7, max_tokens: int = 50000
 ) -> str:
-    """Make a call to HuggingFace model"""
-    model, tokenizer = model_manager.get_model_and_tokenizer()
-
+    """Make a call to Ollama generation API"""
     try:
-        # Prepare the model input
-        messages = [{"role": "user", "content": prompt}]
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            enable_thinking=False,
-            add_generation_prompt=True,
+        print(f"DEBUG [call_llm] prompt_len={len(prompt)} max_tokens={max_tokens} temp={temperature}", file=sys.stderr)
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "think": True,  
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                }
+            }
         )
-
-        model_inputs = tokenizer([text], return_tensors="pt").to(DEVICE)
-
-        # Generate the output with temperature and max_new_tokens
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **model_inputs,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                do_sample=True if temperature > 0 else False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-
-        # Get and decode the output
-        output_ids = generated_ids[0][len(model_inputs.input_ids[0]) :]
-        response = tokenizer.decode(output_ids, skip_special_tokens=True)
-
-        return response.strip()
+        response.raise_for_status()
+        data = response.json()
+        print(f"DEBUG [call_llm] raw keys={list(data.keys())} response_len={len(data.get('response',''))} done={data.get('done')} done_reason={data.get('done_reason')}", file=sys.stderr)
+        if "error" in data:
+            print(f"[ERROR] Ollama returned error: {data['error']}", file=sys.stderr)
+            return ""
+        result = data.get("response", "").strip()
+        if not result:
+            print(f"DEBUG [call_llm] WARNING: empty response. Full data: {data}", file=sys.stderr)
+        return result
 
     except Exception as e:
-        print(f"Error calling HuggingFace model: {e}")
+        print(f"[ERROR] call_llm exception: {e}", file=sys.stderr)
         return ""
 
 
-def call_huggingface_llm_stream(
-    prompt: str, temperature: float = 0.7, max_tokens: int = 512
+def call_llm_stream(
+    prompt: str, temperature: float = 0.7, max_tokens: int = 50000
 ):
-    """Stream responses from HuggingFace model"""
-    model, tokenizer = model_manager.get_model_and_tokenizer()
-
+    """Stream responses from Ollama generation API"""
     try:
-        messages = [{"role": "user", "content": prompt}]
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            enable_thinking=False,
-            add_generation_prompt=True,
+        print(f"DEBUG [call_llm_stream] prompt_len={len(prompt)} max_tokens={max_tokens} temp={temperature}", file=sys.stderr)
+        print(f"DEBUG [call_llm_stream] Requesting {OLLAMA_BASE_URL}/api/generate with {OLLAMA_MODEL}...", file=sys.stderr)
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": True,
+                "think": True,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                }
+            },
+            stream=True
         )
+        response.raise_for_status()
 
-        model_inputs = tokenizer([text], return_tensors="pt").to(DEVICE)
-
-        from transformers import TextIteratorStreamer
-        from threading import Thread
-
-        streamer = TextIteratorStreamer(
-            tokenizer, skip_prompt=True, skip_special_tokens=True
-        )
-
-        generation_kwargs = dict(
-            **model_inputs,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            do_sample=True if temperature > 0 else False,
-            pad_token_id=tokenizer.eos_token_id,
-            streamer=streamer,
-        )
-
-        # Run generation in a separate thread
-        thread = Thread(target=model.generate, kwargs=generation_kwargs)
-        thread.start()
-
-        for token in streamer:
-            yield token
-
-        thread.join()
+        total_tokens = 0
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                if "error" in chunk:
+                    print(f"\n[ERROR] Ollama stream error: {chunk['error']}", file=sys.stderr)
+                    return
+                if chunk.get("done"):
+                    print(f"\nDEBUG [call_llm_stream] done_reason={chunk.get('done_reason')} total_tokens_yielded={total_tokens} eval_count={chunk.get('eval_count')} prompt_eval_count={chunk.get('prompt_eval_count')} chunk_keys={list(chunk.keys())}", file=sys.stderr)
+                text = chunk.get("response", "")
+                if text:
+                    total_tokens += 1
+                print(text, end='', file=sys.stderr, flush=True)
+                yield text
+        print(f"\nDEBUG [call_llm_stream] stream finished. total_tokens_yielded={total_tokens}\n", file=sys.stderr, flush=True)
 
     except Exception as e:
-        print(f"Error in streaming: {e}")
-        yield ""
-
-
-# Keep the original for non-streaming needs
-call_llm = call_huggingface_llm
-call_llm_stream = call_huggingface_llm_stream
+        print(f"[ERROR] call_llm_stream exception: {e}", file=sys.stderr)
+        yield f" [Error: {e}]"

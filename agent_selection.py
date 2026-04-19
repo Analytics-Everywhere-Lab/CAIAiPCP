@@ -51,7 +51,7 @@ def analyze_patient_needs(patient_info: str) -> Dict:
         }}"""
 
     try:
-        response = call_llm(analysis_prompt, temperature=0.3, max_tokens=512)
+        response = call_llm(analysis_prompt)
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
         if json_match:
             analysis = json.loads(json_match.group())
@@ -148,7 +148,7 @@ def select_healthcare_team(
 
     try:
         # Get LLM response
-        response = call_llm(selection_prompt, temperature=0.4, max_tokens=700)
+        response = call_llm(selection_prompt, temperature=0.4)
 
         # Extract JSON from response
         json_match = re.search(r"\{.*\}", response, re.DOTALL)
@@ -226,7 +226,8 @@ def select_healthcare_team(
         print("Falling back to complexity-based selection...")
 
     # Fallback: Use complexity-based selection if LLM fails
-    return select_team_by_complexity(patient_analysis, patient_info)
+    fallback_team = select_team_by_complexity(patient_analysis, patient_info)
+    return fallback_team, ["⚠️ Fallback to complexity-based selection due to LLM error."]
 
 
 def clean_json_str(json_str: str) -> str:
@@ -380,7 +381,7 @@ def explain_team_selection(
         Keep it concise and focused on the value each professional brings."""
 
     try:
-        explanation = call_llm(explanation_prompt, temperature=0.5, max_tokens=128)
+        explanation = call_llm(explanation_prompt, temperature=0.5)
         return explanation.strip()
     except:
         return "This interdisciplinary team was selected to address the patient's complex medical, functional, and psychosocial needs through coordinated care."

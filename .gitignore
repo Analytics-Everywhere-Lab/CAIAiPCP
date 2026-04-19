@@ -9,3 +9,5 @@ frontend/node_modules
 .gradio
 node-v20.11.1-linux-x64
 chroma_db/*
+venv/*
+venv/

@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 import gradio as gr
 from graph import create_care_plan_graph
+from llm_caller import call_llm_stream
 from state import Argument
 import time
 from markdown import heading, examples, usage
@@ -473,10 +474,7 @@ class CarePlanGradioInterface:
                     "content": "Invalid modify command. Use format: 'modify [index] [new content]'",
                 }
 
-        return {
-            "role": "assistant",
-            "content": "Invalid command. Please use 'accept', 'remove [index]', 'modify [index] [text]', or 'add [support/challenge] [option] [text]'",
-        }
+        return None
 
 
     def _reset_session(self):
@@ -485,11 +483,11 @@ class CarePlanGradioInterface:
         self.current_thread_id = None
         self.graph = None
 
-    def _yield_ui(self, title, chat_history, msg_visible=True, refs=None):
+    def _yield_ui(self, title, chat_history, msg_visible=True, refs=None, msg_value=gr.NO_VALUE):
         return (
             gr.update(visible=True, value=title),
             chat_history,
-            gr.update(visible=msg_visible),
+            gr.update(visible=msg_visible, value=msg_value),
             {} if refs is None else refs,
         )
 
@@ -840,33 +838,76 @@ class CarePlanGradioInterface:
     def respond(self, message, chat_history, ref_data):
         """Handle chat responses in message format"""
         chat_history.append({"role": "user", "content": message})
+        
+        # Clear the input textbox early 
+        yield self._yield_ui("## Processing...", chat_history, msg_visible=True, refs=ref_data, msg_value="")
 
         if not self.review_complete:
             response = self.process_user_input_msg(message)
-            chat_history.append(response)
+            if response is not None:
+                chat_history.append(response)
 
-            if self.review_complete:
-                for updated_history, updated_refs in self.continue_after_review(
-                    chat_history
-                ):
-                    # During processing after acceptance: hide the input
+                if self.review_complete:
+                    for updated_history, updated_refs in self.continue_after_review(
+                        chat_history
+                    ):
+                        # During processing after acceptance: hide the input
+                        yield self._yield_ui(
+                            "## Validating Arguments and Finalizing Care Plan...",
+                            updated_history,
+                            msg_visible=False,
+                            refs=updated_refs,
+                        )
+                    return
+                else:
                     yield self._yield_ui(
-                        "## Validating Arguments and Finalizing Care Plan...",
-                        updated_history,
-                        msg_visible=False,
-                        refs=updated_refs,
+                        "## Review Arguments...",
+                        chat_history,
+                        msg_visible=True,
+                        refs=ref_data,
                     )
+                    return
+            else:
+                yield from self._chat_with_llm(message, chat_history, ref_data)
                 return
         else:
-            response_content = "The care plan is complete. You can review the collapsible sections above for detailed evidence and citations."
-            chat_history.append({"role": "assistant", "content": response_content})
+            yield from self._chat_with_llm(message, chat_history, ref_data)
+            return
 
-        yield self._yield_ui(
-            "## Finalized Care Plan",
-            chat_history,
-            msg_visible=True,
-            refs=ref_data,
-        )
+    def _chat_with_llm(self, message, chat_history, ref_data):
+        import sys
+        print(f"DEBUG [_chat_with_llm]: message='{message}'", file=sys.stderr)
+        prompt = "You are an expert AI medical assistant helping a user with an elderly care plan.\n"
+        prompt += "Answer the user's questions intelligently. If you're responding to a query about the generated care plan or arguments, rely on the provided conversation context.\n\n"
+        prompt += "Conversation Context:\n"
+
+        history_to_include = chat_history[-6:-1]
+        for msg in history_to_include:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                prompt += f"{role}: {content[:1500]} {'... (truncated)' if len(content) > 1500 else ''}\n\n"
+
+        prompt += f"User: {message}\n\nAssistant:"
+
+        print(f"DEBUG [_chat_with_llm]: sending prompt to OLLAMA (length {len(prompt)})", file=sys.stderr)
+
+        chat_history.append({"role": "assistant", "content": ""})
+        
+        chunk_count = 0
+        try:
+            for chunk in call_llm_stream(prompt):
+                if chunk_count < 5:
+                    print(f"DEBUG [stream chunk {chunk_count}]: {repr(chunk)}", file=sys.stderr)
+                chunk_count += 1
+                chat_history[-1]["content"] += chunk
+                yield self._yield_ui("## Consulting Medical AI...", chat_history, msg_visible=True, refs=ref_data)
+        except Exception as e:
+            print(f"DEBUG [_chat_with_llm] Exception: {e}", file=sys.stderr)
+            chat_history[-1]["content"] += f"\n[Error: {str(e)}]"
+            yield self._yield_ui("## Error in Chat", chat_history, msg_visible=True, refs=ref_data)
+
+        print(f"DEBUG [_chat_with_llm]: finished streaming {chunk_count} chunks", file=sys.stderr)
 
     def _handle_argument_validation_node(self, node_state, history, processing_msg_idx):
         """Handle argument validation node updates"""
