@@ -13,6 +13,7 @@
 # Prerequisites
 - Git, `Miniconda` and `Make` need to be installed in order to run the MCP server.
 - Additionally, `Ollama` and the `gemma:latest` model are assumed to be installed and configured.
+- If you want to run the library scan make target, you need Trivy installed.
 
 # Make Targets
 - Once the `make` command is available on your system, you should be able to see the following targets when you type `make` in a terminal from the `<project root>/mcp/assemble` directory.
