@@ -67,7 +67,8 @@ export
 	l_conda_create_all \
 	l_conda_remove_all \
 	l_mcp_library_scan \
-	l_recreate_db
+	l_recreate_db \
+	l_run_db_cli
 
 .DEFAULT_GOAL := help
 
@@ -91,6 +92,10 @@ l_recreate_db: ## Re-creates sqllite database. sqllite should already be install
 	cd $(PWD)/.././util_scripts; \
 	sh init_db.sh; \
 	echo "Complete"
+
+l_run_db_cli: ## Connects to the database using the sqllite cli.
+	@cd $(PWD)/.././util_scripts; \
+	sh cli.sh; \
 
 l_conda_create_cp_mcp:
 	$(call CREATE_ENV,cp_mcp,$(PWD)/../)
