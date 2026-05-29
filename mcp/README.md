@@ -26,7 +26,7 @@ cd <project root>/mcp/assemble
 make l_recreate_db
 ~~~
 - This will create and populate the database (the database file is : `<project root>/mcp/db/aip.db`). Only run this once.
-- To reset the database, re-run the `make l_recreate_db` make target again.
+- To reset the database to its initial state, re-run the `make l_recreate_db` make target any time you wish to refresh it.
 - When the database is ready, you should see something like this in your terminal :
 ![sqlite](./images/sqlite.png "sqlite")
 
