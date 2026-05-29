@@ -19,7 +19,7 @@
 
 
 # General Setup and Usage Instructions
-The instructions assume that you are in the `<project root>/mcp` directory.
+The instructions assume that you are in the `<project root>/mcp/assemble` directory.
 They have been tested and validate on a Mac M2.
 
 ---
