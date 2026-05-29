@@ -35,7 +35,7 @@ make l_recreate_db
 - Running the command-line interface to the database is optional.
 ~~~
 <new terminal window>
-cd <project root>/mcp
+cd <project root>/mcp/assemble
 make l_run_db_cli
 ~~~
 - When run, you can issue SQL queries interactively
@@ -48,7 +48,7 @@ make l_run_db_cli
 - $\color{red}{\text{(REQUIRED)}}$ - Run following commands to setup the conda environment with python 3.13.3
 ~~~
 <new terminal window>
-cd <project root>/mcp
+cd <project root>/mcp/assemble
 make l_run_mcp_server
 ~~~
 
