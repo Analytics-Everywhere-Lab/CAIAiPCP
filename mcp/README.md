@@ -1,5 +1,4 @@
 # Purpose
-
 - MCP server used to share tools, prompts and resources
 - Available tools :
    - `cancel_booked_appointment_for_client` - Cancels a client appointment with a provider at a specific slot number
@@ -11,42 +10,49 @@
 - Available prompts :
    - `configure_assistant`
 
-# General Setup and Usage Instructions
+# Prerequisites
+* Git, Miniconda and Make need to be installed in order to run the MCP server.
 
+# General Setup and Usage Instructions
 The instructions assume that you are in the `<project root>/mcp` directory.
 They have been tested and validate on a Mac M2.
 
-
 ---
 
-- (REQUIRED) - Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
+- $\color{red}{\text{(REQUIRED)}}$ - Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
-cd ./util_scripts
-sh init_db.sh
+cd <project root>/mcp
+make l_recreate_db
 ~~~
 - This will create and populate the database (the database file is : `<project root>/mcp/db/aip.db`). Only run this once.
-- When the databaes is ready, you should see something like this in your terminal :
-
+- When the database is ready, you should see something like this in your terminal :
 ![sqlite](./images/sqlite.png "sqlite")
 
-
 ---
 
-- (OPTIONAL) - There is a `cli.sh` file in the `./util_scripts` directory that can be used to connect to the database using the command-line interface
-- Running the command-line interface is optional
+- (OPTIONAL) - You can connect to the database via make.
+- Running the command-line interface to the database is optional.
+~~~
+<new terminal window>
+cd <project root>/mcp
+make l_run_db_cli
+~~~
 - When run, you can issue SQL queries interactively
-- If the `cli.sh` script is run, you should see something like this in your terminal:
-
+- If the `make l_run_db_cli` command was successful, you should see something like this in your terminal:
 ![cli](./images/cli.png "cli")
-
-- To reset the database, delete the `<project root>/mcp/db/aip.db` file and re-run the database setup step.
-
+- To reset the database, re-run the `make l_recreate_db` make target again.
 
 ---
 
+- $\color{red}{\text{(REQUIRED)}}$ - Run following commands to setup the conda environment with python 3.13.3
+~~~
+<new terminal window>
+cd <project root>/mcp
+make l_run_mcp_server
+~~~
 
-- (REQUIRED) - Run following commands to setup the conda environment with python 3.13.3
+zzz to delelete
 ~~~
 <new terminal window>
 cd ./src
