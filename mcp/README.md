@@ -11,7 +11,12 @@
    - `configure_assistant`
 
 # Prerequisites
-* Git, `Miniconda` and `Make` need to be installed in order to run the MCP server.
+- Git, `Miniconda` and `Make` need to be installed in order to run the MCP server.
+
+# Make Targets
+- Once the `make` command is available on your system, you should be able to see the following targets when you type `make` in a terminal from the `<project root>/mcp/assemble` directory.
+![make](./images/make.png "make")
+
 
 # General Setup and Usage Instructions
 The instructions assume that you are in the `<project root>/mcp` directory.
