@@ -11,7 +11,7 @@
    - `configure_assistant`
 
 # Prerequisites
-* Git, Miniconda and Make need to be installed in order to run the MCP server.
+* Git, `Miniconda` and `Make` need to be installed in order to run the MCP server.
 
 # General Setup and Usage Instructions
 The instructions assume that you are in the `<project root>/mcp` directory.
@@ -22,7 +22,7 @@ They have been tested and validate on a Mac M2.
 - $\color{red}{\text{(REQUIRED)}}$ - Setting up the sqlite3 database - (Assumes sqlite3 is already installed as is the case on a Mac.)
 ~~~
 <new terminal window>
-cd <project root>/mcp
+cd <project root>/mcp/assemble
 make l_recreate_db
 ~~~
 - This will create and populate the database (the database file is : `<project root>/mcp/db/aip.db`). Only run this once.
