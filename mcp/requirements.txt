@@ -1,3 +1,4 @@
+aiosqlite==0.22.1
 annotated-types==0.7.0
 anyio==4.10.0
 appnope==0.1.4

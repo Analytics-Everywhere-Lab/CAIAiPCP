@@ -142,7 +142,8 @@ l_run_mcp_server: l_conda_create_cp_mcp ## Run the MCP server locally for develo
 		set -e; \
 		$(CONDA_ACTIVATE) ; \
 		echo "Conda Prefix: $$CONDA_PREFIX" ; \
-		echo " ... will run mcp server startup script..." ; \
+		cd $(PROJECT_ROOT)/src/back_end ; \
+		python mcp_server.py ; \
 	)
 
 l_run_mcp_inspector: ## Runs MCP inspector

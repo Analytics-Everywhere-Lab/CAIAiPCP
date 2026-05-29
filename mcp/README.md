@@ -45,40 +45,17 @@ make l_run_db_cli
 
 ---
 
-- $\color{red}{\text{(REQUIRED)}}$ - Run following commands to setup the conda environment with python 3.13.3
+- $\color{red}{\text{(REQUIRED)}}$ - Run following commands to launch the MCP server:
 ~~~
 <new terminal window>
 cd <project root>/mcp/assemble
 make l_run_mcp_server
 ~~~
-
-zzz to delelete
-~~~
-<new terminal window>
-cd ./src
-conda create -n mcp-server python=3.13.3
-conda activate mcp-server
-pip install -r requirements.txt
-pip install aiosqlite
-~~~
-
-
----
-
-
-- (REQUIRED) - Start the MCP server
-~~~
-<new terminal window>
-cd ./src/back_end
-python mcp_server.py
-~~~
+- Note that this command should setup a Conda environment if it does not exist and activate it prior to running the MCP server.
 - When the MCP server script is run, you should see something like this in your terminal:
 ![mcp](./images/mcp.png "mcp")
 
-
-
 ---
-
 
 - (OPTIONAL) - If you want to test the mcp server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
@@ -93,10 +70,7 @@ jupyter notebook
 
 ![jupyter](./images/jupyter.png "jupyter")
 
-
-
 ---
-
 
 - (OPTIONAL) - If you want to run the unit tests,
 - Note that the MCP server must be running and the datbase must exist for the tests to pass
@@ -111,9 +85,7 @@ sh run_unit_tests.sh
 
 - The tests should all succeed. It is best to re-initialize the database prior to running the tests.
 
-
 ---
-
 
 - (OPTIONAL) -  If you want to run the command-line chat interface:
 ~~~
@@ -127,9 +99,7 @@ python cli_demo.py
 
 - Note that the MCP server needs to be running for the chat client to work
 
-
 ---
-
 
 - (OPTIONAL) - If you want to run the MCP inspector:
 ~~~
@@ -141,5 +111,4 @@ sh start_inpector.sh
 - The GUI for the inspector should look like this:
 ![inspector](./images/inspector.png "inspector")
 - Note that the MCP server must be running and the database must exit in order to interact with the tools using the inspector
-
 - Note that the inspector needs `npm` and `nodejs`. These can be installed with brew.
