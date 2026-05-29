@@ -47,6 +47,7 @@ SHELL := /bin/bash
 l_run_mcp_server: CONDA_ENV = cp_mcp
 l_run_mcp_tests: CONDA_ENV = cp_mcp
 l_run_mcp_inspector: CONDA_ENV = cp_mcp
+l_run_jupyter: CONDA_ENV = cp_mcp
 
 # Validates that a target-specific CONDA_ENV variable is explicitly set,
 # sources Conda's shell integration script, and activates the environment.
@@ -64,6 +65,7 @@ export
 	l_run_mcp_server \
 	l_run_mcp_tests \
 	l_run_mcp_inspector \
+	l_run_jupyter \
 	l_conda_create_all \
 	l_conda_remove_all \
 	l_mcp_library_scan \
@@ -144,6 +146,15 @@ l_run_mcp_server: l_conda_create_cp_mcp ## Run the MCP server locally for develo
 		echo "Conda Prefix: $$CONDA_PREFIX" ; \
 		cd $(PROJECT_ROOT)/src/back_end ; \
 		python mcp_server.py ; \
+	)
+
+l_run_jupyter: l_conda_create_cp_mcp ## Run the jupyter locally for development
+	@ ( \
+		set -e; \
+		$(CONDA_ACTIVATE) ; \
+		echo "Conda Prefix: $$CONDA_PREFIX" ; \
+		cd $(PROJECT_ROOT)/src/jupyter ; \
+		jupyter notebook ; \
 	)
 
 l_run_mcp_inspector: ## Runs MCP inspector

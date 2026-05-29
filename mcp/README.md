@@ -67,9 +67,8 @@ make l_run_mcp_server
    - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the MCP server.
 ~~~
 <new terminal window>
-cd ./src
-conda activate mcp-server
-jupyter notebook
+cd <project root>/mcp/assemble
+make l_run_jupyter
 ~~~
 - Notebooks will be located in the `./jupyter` directory
 
