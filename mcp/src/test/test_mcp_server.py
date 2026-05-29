@@ -10,7 +10,7 @@ class TestMcpServer(BaseAsyncTestCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         logging.info('Test setup')
-        self._llm = ChatOllama(model="qwen3:8b", base_url=OLLAMA_URL, reasoning=True, temperature=0)
+        self._llm = ChatOllama(model="gemma4:latest", base_url=OLLAMA_URL, reasoning=True, temperature=0)
         self._client = MultiServerMCPClient(
             {
                 "Demo": {

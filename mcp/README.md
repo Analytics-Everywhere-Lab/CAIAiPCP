@@ -62,7 +62,7 @@ make l_run_mcp_server
 
 ---
 
-- (OPTIONAL) - If you want to test the mcp server with Jupyter
+- (OPTIONAL) - If you want to test the MCP server with Jupyter
 - The Jupyter notebook is helpful when learning how to interact with the MCP server. 
    - See [./src/jupyter/mcp_test.ipynb](./src/jupyter/mcp_test.ipynb) and [./src/jupyter/simple_graph.ipynb](./src/jupyter/simple_graph.ipynb) for details on how to interact with the MCP server.
 ~~~
@@ -70,19 +70,18 @@ make l_run_mcp_server
 cd <project root>/mcp/assemble
 make l_run_jupyter
 ~~~
-- Notebooks will be located in the `./jupyter` directory
+- Notebooks will be located in the `./` directory
 
 ![jupyter](./images/jupyter.png "jupyter")
 
 ---
 
 - (OPTIONAL) - If you want to run the unit tests,
-- Note that the MCP server must be running and the datbase must exist for the tests to pass
+- Note that the MCP server must be running and the database must exist for the tests to pass
 ~~~
 <new terminal window>
-conda activate mcp-server
-cd ./util_scripts
-sh run_unit_tests.sh
+cd <project root>/mcp/assemble
+make l_run_mcp_tests
 ~~~
 - When running the unit tests, your terminal should look like this:
 ![unittest](./images/unittest.png "unittest")

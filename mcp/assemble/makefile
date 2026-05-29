@@ -168,7 +168,8 @@ l_run_mcp_tests: l_conda_create_cp_mcp ## Run the MCP service-related unit tests
 		set -e; \
 		$(CONDA_ACTIVATE) ; \
 		echo "Conda Prefix: $$CONDA_PREFIX" ; \
-		echo " ... will run mcp service-related unit tests ..." ; \
+		cd $(PROJECT_ROOT)/src; \
+		python -m unittest discover -s test -p 'test_*.py' -v ;\
 	)
 
 # Define the fallback scan modifier if not overridden via command line
