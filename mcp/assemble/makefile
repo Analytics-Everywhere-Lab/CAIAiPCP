@@ -8,8 +8,8 @@
 VERSION := v0.0.1
 
 # Build environment destination.
-# Option here is : local_dev
-BUILD_DEST := loc_dev
+# Option here is : l_dev
+BUILD_DEST := l_dev
 
 # Trivy scanning options
 TRIVY_SEVERITY ?= HIGH,CRITICAL
@@ -43,10 +43,10 @@ SHELL := /bin/bash
 
 # Target-Specific Assignments (Mandatory per target)
 # These Conda environments must exist locally on the development box.
-# Used for local development. See loc_conda_create_* targets to create the Conda environments.
-loc_run_mcp_server: CONDA_ENV = cp_mcp
-loc_run_mcp_tests: CONDA_ENV = cp_mcp
-loc_run_mcp_inspector: CONDA_ENV = cp_mcp
+# Used for local development. See l_conda_create_* targets to create the Conda environments.
+l_run_mcp_server: CONDA_ENV = cp_mcp
+l_run_mcp_tests: CONDA_ENV = cp_mcp
+l_run_mcp_inspector: CONDA_ENV = cp_mcp
 
 # Validates that a target-specific CONDA_ENV variable is explicitly set,
 # sources Conda's shell integration script, and activates the environment.
@@ -60,35 +60,43 @@ export
 
 .PHONY: \
 	help \
-	loc_print_env \
-	loc_run_mcp_server \
-	loc_run_mcp_tests \
-	loc_run_mcp_inspector \
-	loc_conda_create_all \
-	loc_conda_remove_all \
-	loc_mcp_library_scan
+	l_print_env \
+	l_run_mcp_server \
+	l_run_mcp_tests \
+	l_run_mcp_inspector \
+	l_conda_create_all \
+	l_conda_remove_all \
+	l_mcp_library_scan \
+	l_recreate_db
 
 .DEFAULT_GOAL := help
 
 help:
 	@echo ""
 	@echo "================ LOCAL DEVELOPMENT TARGETS ================"
-	@awk '/^loc_[a-zA-Z_-]+:.*?##/ { \
+	@awk '/^l_[a-zA-Z_-]+:.*?##/ { \
 		helpMessage = substr($$0, index($$0, "##") + 3); \
 		target = $$1; sub(/:.*/, "", target); \
 		printf "\033[36m%-28s\033[0m %s\n", target, helpMessage \
 	}' $(MAKEFILE_LIST)
 
-loc_print_env: ## Print exported environment variables visible to targets
+l_print_env: ## Print exported environment variables visible to targets
 	@echo ""
 	@echo "================ EXPORTED ENVIRONMENT ================"
 	@env | sort | more
 
-loc_conda_create_cp_mcp:
+l_recreate_db: ## Re-creates sqllite database. sqllite should already be installed on OSX
+	@echo "Recreating Database ... "; \
+	rm -fR $(PWD)/../db/aip.db; \
+	cd $(PWD)/.././util_scripts; \
+	sh init_db.sh; \
+	echo "Complete"
+
+l_conda_create_cp_mcp:
 	$(call CREATE_ENV,cp_mcp,$(PWD)/../)
 
-loc_conda_create_all: ## Creates all local Conda environments
-	$(MAKE) loc_conda_create_cp_mcp
+l_conda_create_all: ## Creates all local Conda environments
+	$(MAKE) l_conda_create_cp_mcp
 
 define CREATE_ENV
 	@set -e; \
@@ -112,11 +120,11 @@ define CREATE_ENV
 	fi
 endef
 
-loc_conda_remove_cp_mcp:
+l_conda_remove_cp_mcp:
 	$(call REMOVE_ENV,cp_mcp)
 
-loc_conda_remove_all: ## Removes all Conda environments
-	$(MAKE) loc_conda_remove_cp_mcp
+l_conda_remove_all: ## Removes all Conda environments
+	$(MAKE) l_conda_remove_cp_mcp
 
 define REMOVE_ENV
 	@set -e; \
@@ -124,7 +132,7 @@ define REMOVE_ENV
 	conda env remove -n $(1) -y || true
 endef
 
-loc_run_mcp_server: loc_conda_create_cp_mcp ## Run the MCP server locally for development
+l_run_mcp_server: l_conda_create_cp_mcp ## Run the MCP server locally for development
 	@ ( \
 		set -e; \
 		$(CONDA_ACTIVATE) ; \
@@ -132,13 +140,13 @@ loc_run_mcp_server: loc_conda_create_cp_mcp ## Run the MCP server locally for de
 		echo " ... will run mcp server startup script..." ; \
 	)
 
-loc_run_mcp_inspector: ## Runs MCP inspector
+l_run_mcp_inspector: ## Runs MCP inspector
 	@ (\
 		set -e; \
 		npx @modelcontextprotocol/inspector; \
 	)
 
-loc_run_mcp_tests: loc_conda_create_cp_mcp ## Run the MCP service-related unit tests locally for development
+l_run_mcp_tests: l_conda_create_cp_mcp ## Run the MCP service-related unit tests locally for development
 	@ ( \
 		set -e; \
 		$(CONDA_ACTIVATE) ; \
@@ -151,7 +159,7 @@ SCAN_TARGET ?= default
 TRIVY_TEMP_LOCK := requirements.lock
 
 
-loc_mcp_library_scan: loc_conda_remove_all loc_conda_create_all ## Run Trivy scan across specified or default Conda environments
+l_mcp_library_scan: l_conda_remove_all l_conda_create_all ## Run Trivy scan across specified or default Conda environments
 	@rm -f $(TRIVY_TEMP_LOCK)
 	@\
 	if [ "$(SCAN_TARGET)" = "default" ]; then \
