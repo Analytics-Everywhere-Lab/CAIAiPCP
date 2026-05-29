@@ -21,7 +21,7 @@ CLIENT = MultiServerMCPClient(
     }
 )
 
-LLM = ChatOllama(model="qwen3:8b", base_url=OLLAMA_URL, reasoning=True, temperature=0)
+LLM = ChatOllama(model="gemma4:latest", base_url=OLLAMA_URL, reasoning=True, temperature=0)
 
 
 class AgentState(TypedDict):

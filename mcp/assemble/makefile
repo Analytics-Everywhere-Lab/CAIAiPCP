@@ -48,6 +48,7 @@ l_run_mcp_server: CONDA_ENV = cp_mcp
 l_run_mcp_tests: CONDA_ENV = cp_mcp
 l_run_mcp_inspector: CONDA_ENV = cp_mcp
 l_run_jupyter: CONDA_ENV = cp_mcp
+l_run_cli : CONDA_ENV = cp_mcp
 
 # Validates that a target-specific CONDA_ENV variable is explicitly set,
 # sources Conda's shell integration script, and activates the environment.
@@ -65,6 +66,7 @@ export
 	l_run_mcp_server \
 	l_run_mcp_tests \
 	l_run_mcp_inspector \
+	l_run_cli \
 	l_run_jupyter \
 	l_conda_create_all \
 	l_conda_remove_all \
@@ -139,6 +141,15 @@ define REMOVE_ENV
 	conda env remove -n $(1) -y || true
 endef
 
+l_run_cli: l_conda_create_cp_mcp ## Run a CLI to interact with the MCP server tools
+	@ ( \
+		set -e; \
+		$(CONDA_ACTIVATE) ; \
+		echo "Conda Prefix: $$CONDA_PREFIX" ; \
+		cd $(PROJECT_ROOT)/src/front_end ; \
+		python cli_demo.py ; \
+	)
+
 l_run_mcp_server: l_conda_create_cp_mcp ## Run the MCP server locally for development
 	@ ( \
 		set -e; \
@@ -175,7 +186,6 @@ l_run_mcp_tests: l_conda_create_cp_mcp ## Run the MCP service-related unit tests
 # Define the fallback scan modifier if not overridden via command line
 SCAN_TARGET ?= default
 TRIVY_TEMP_LOCK := requirements.lock
-
 
 l_mcp_library_scan: l_conda_remove_all l_conda_create_all ## Run Trivy scan across specified or default Conda environments
 	@rm -f $(TRIVY_TEMP_LOCK)

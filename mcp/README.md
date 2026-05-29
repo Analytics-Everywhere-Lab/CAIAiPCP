@@ -12,11 +12,11 @@
 
 # Prerequisites
 - Git, `Miniconda` and `Make` need to be installed in order to run the MCP server.
+- Additionally, `Ollama` and the `gemma:latest` model are assumed to be installed and configured.
 
 # Make Targets
 - Once the `make` command is available on your system, you should be able to see the following targets when you type `make` in a terminal from the `<project root>/mcp/assemble` directory.
 ![make](./images/make.png "make")
-
 
 # General Setup and Usage Instructions
 The instructions assume that you are in the `<project root>/mcp/assemble` directory.
@@ -93,23 +93,20 @@ make l_run_mcp_tests
 - (OPTIONAL) -  If you want to run the command-line chat interface:
 ~~~
 <new terminal window>
-conda activate mcp-server
-cd ./src/front_end/
-python cli_demo.py
+cd <project root>/mcp/assemble
+make l_run_cli
 ~~~
 - When running the command-line interface your terminal should look like this:
 ![mcp_client](./images/mcp_cli.png "mcp_client")
-
-- Note that the MCP server needs to be running for the chat client to work
+- Note that the MCP server needs to be running for the chat client to work.
 
 ---
 
 - (OPTIONAL) - If you want to run the MCP inspector:
 ~~~
 <new terminal window>
-conda activate mcp-server
-cd ./util_scripts
-sh start_inpector.sh
+cd <project root>/mcp/assemble
+make l_run_mcp_inspector
 ~~~
 - The GUI for the inspector should look like this:
 ![inspector](./images/inspector.png "inspector")
