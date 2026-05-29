@@ -38,7 +38,7 @@ make l_recreate_db
 ---
 
 - (OPTIONAL) - You can connect to the database via make.
-- Running the command-line interface to the database is optional.
+- Running the command-line interface to connect to the database is optional.
 ~~~
 <new terminal window>
 cd <project root>/mcp/assemble
