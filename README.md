@@ -39,9 +39,12 @@ To set up the project, follow these steps:
    ```bash
    npm run dev
    ```
+3.1. Tell the development server to “open in browser” (type : o in the front-end terminal window)
+3.2. This should open your default browser and open the frontend graphical user interface.
+
 
 > [!NOTE]
-> The backend server must be running on `http://localhost:8001` for the frontend to communicate with it.
+> The backend server may need to be running on `http://localhost:8001` for the frontend to communicate with it.
 
 ## Setup
 
