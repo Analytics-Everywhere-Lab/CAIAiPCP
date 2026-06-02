@@ -39,8 +39,9 @@ To set up the project, follow these steps:
    ```bash
    npm run dev
    ```
-   3.1. Tell the development server to “open in browser” (type : o in the front-end terminal window)
-   3.2. This should open your default browser and open the frontend graphical user interface.
+
+   - Tell the development server to “open in browser” (type : o in the front-end terminal window)
+   - This should open your default browser and open the frontend graphical user interface.
 
 
 > [!NOTE]
