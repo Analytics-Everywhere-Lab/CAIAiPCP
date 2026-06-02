@@ -72,6 +72,7 @@ export
 	l_conda_remove_all \
 	l_mcp_library_scan \
 	l_recreate_db \
+	l_install_emr_api \
 	l_run_db_cli
 
 .DEFAULT_GOAL := help
@@ -128,6 +129,9 @@ define CREATE_ENV
 		conda run -n $(1) pip install -r "$${TARGET_DIR}/requirements.txt"; \
 	fi
 endef
+
+l_install_emr_api: l_conda_create_cp_mcp ## Install AccuroEMR API access library
+	@echo "TODO..."
 
 l_conda_remove_cp_mcp:
 	$(call REMOVE_ENV,cp_mcp)
