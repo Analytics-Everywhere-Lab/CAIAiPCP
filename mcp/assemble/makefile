@@ -14,7 +14,7 @@ BUILD_DEST := l_dev
 # Trivy scanning options
 TRIVY_SEVERITY ?= HIGH,CRITICAL
 DEFAULT_SCAN_ENVS := cp_mcp
-
+ACCURO_API_LIB := /tmp/accuro_sample-0.1.0-py3-none-any.whl 
 
 #####################################
 #
@@ -49,6 +49,8 @@ l_run_mcp_tests: CONDA_ENV = cp_mcp
 l_run_mcp_inspector: CONDA_ENV = cp_mcp
 l_run_jupyter: CONDA_ENV = cp_mcp
 l_run_cli : CONDA_ENV = cp_mcp
+l_install_emr_api : CONDA_ENV = cp_mcp
+l_run_lib_login: CONDA_ENV = cp_mcp
 
 # Validates that a target-specific CONDA_ENV variable is explicitly set,
 # sources Conda's shell integration script, and activates the environment.
@@ -73,7 +75,8 @@ export
 	l_mcp_library_scan \
 	l_recreate_db \
 	l_install_emr_api \
-	l_run_db_cli
+	l_run_db_cli \
+	l_run_lib_login
 
 .DEFAULT_GOAL := help
 
@@ -131,7 +134,20 @@ define CREATE_ENV
 endef
 
 l_install_emr_api: l_conda_create_cp_mcp ## Install AccuroEMR API access library
-	@echo "TODO..."
+	@ ( \
+		set -e; \
+		$(CONDA_ACTIVATE) ; \
+		echo "Conda Prefix: $$CONDA_PREFIX" ; \
+		pip install $(ACCURO_API_LIB) ; \
+	)
+l_run_lib_login: l_conda_create_cp_mcp ## Run login that is browser based
+	@ ( \
+		set -e; \
+		$(CONDA_ACTIVATE) ; \
+		echo "Conda Prefix: $$CONDA_PREFIX" ; \
+		cd $(PWD)/../ ; \
+		python src/util/login.py ; \
+	)
 
 l_conda_remove_cp_mcp:
 	$(call REMOVE_ENV,cp_mcp)
