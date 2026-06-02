@@ -40,7 +40,7 @@ To set up the project, follow these steps:
    npm run dev
    ```
 
-   - Tell the development server to “open in browser” (type : o in the front-end terminal window)
+   - "Tell" the development server to “open in browser” (e.g., type : o in the development server terminal window).
    - This should open your default browser and open the frontend graphical user interface.
 
 
