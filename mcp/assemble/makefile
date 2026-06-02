@@ -146,7 +146,8 @@ l_run_lib_login: l_conda_create_cp_mcp ## Run login that is browser based
 		$(CONDA_ACTIVATE) ; \
 		echo "Conda Prefix: $$CONDA_PREFIX" ; \
 		cd $(PWD)/../ ; \
-		python src/util/login.py ; \
+		python src/back_end/util/login.py ; \
+		mv tokens.json src/back_end ; \
 	)
 
 l_conda_remove_cp_mcp:

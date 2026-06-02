@@ -2,8 +2,8 @@ from mcp.server.fastmcp import FastMCP
 from util.async_db import execute_sql
 from typing import List
 from util import settings
+from util.fetch_patient import get_patient_info
 import logging
-
 
 # Create an MCP server
 mcp = FastMCP("Demo")
@@ -23,7 +23,7 @@ def configure_assistant() -> list[dict]:
             - slot_number (integer, sorted ascending)
             - provider_name (string)
             - time_slot (string in 'YYYY-MM-DD HH24:MI:SS' format).
-
+        - get_client_info -> returns json string representing client information.
         - book_slot_for_provider → books a client appointment with a provider at a specified slot number.
 
         STRICT RULES:
@@ -44,6 +44,14 @@ def configure_assistant() -> list[dict]:
         }
     ]
     return messages
+
+
+@mcp.tool()
+async def get_client_info(client_id: str) -> dict:
+    """returns a json string representing client information"""
+    logging.info("Getting client information ....")
+    res = get_patient_info(client_id)
+    return res
 
 
 @mcp.tool()
