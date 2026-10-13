@@ -146,8 +146,7 @@ on this machine (`localhost` / `127.0.0.1`). To serve the frontend from another 
 
 ## Self-Evolving Memory
 
-Adapted from [SEMV](https://github.com/Analytics-Everywhere-Lab/SEMV)'s memory consolidation. Every kind of
-clinician feedback reaches memory in one form: operations on the QBAF.
+Every kind of clinician feedback reaches memory in one form: operations on the QBAF.
 
 ```text
 Clinician contestations (table edits + feedback formulated as QBAF operations)
@@ -238,11 +237,6 @@ we would appreciate that you use the following citations:
   year={2026}
 }
 ```
-
-
-## References
-
-<https://github.com/anurag-mishra899/Multi-Agents-Appointment-Booking/blob/main/Back-End/tools/tools.py>
 
 ## TODO
 
