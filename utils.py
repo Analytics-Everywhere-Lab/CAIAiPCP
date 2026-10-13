@@ -21,3 +21,9 @@ def calculate_decision_confidence(arguments: List[Argument]) -> float:
     # Higher support and lower attack scores increase confidence
     confidence = (avg_support + (1 - avg_attack)) / 2
     return round(confidence, 2)
+
+
+def clip_text(text: str, max_chars: int) -> str:
+    """Collapse whitespace and truncate to max_chars, marking the cut with '...'."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= max_chars else text[: max_chars - 3].rstrip() + "..."

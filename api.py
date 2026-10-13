@@ -1,13 +1,30 @@
 import json
 import asyncio
+import queue
+import threading
+import traceback
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from arguments import (
+    arguments_payload,
+    ensure_argument_ids,
+    find_argument,
+    is_human_authored,
+    new_arg_id,
+    record_human_op,
+    resolve_option,
+)
+from care_plan_document import now_iso
+from chat_context import ChatMemory
 from graph import create_care_plan_graph
+from llm_caller import call_llm, call_llm_stream
+from memory.service import consolidation_summary, get_memory_service
 from state import Argument, active_progress
-import re
+from utils import clip_text
 
 app = FastAPI(title="Care Plan Generator API")
 
@@ -27,13 +44,53 @@ class StartRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     action: str
-    target_id: int = None
-    new_content: str = None
-    new_type: str = None
-    new_option: str = None
+    target_id: Optional[int] = None  # positional index, kept for older clients
+    arg_id: Optional[str] = None
+    new_content: Optional[str] = None
+    new_type: Optional[str] = None
+    new_option: Optional[str] = None
+    new_role: Optional[str] = None
+    reason: Optional[str] = None
+
+class FeedbackItem(BaseModel):
+    text: str
+    section_id: Optional[str] = None
+    quote: Optional[str] = None
+
+class RegenerateRequest(BaseModel):
+    feedback: List[FeedbackItem] = []
+
+class ApproveRequest(BaseModel):
+    version: Optional[int] = None
+
+class ChatMessageRequest(BaseModel):
+    message: str
+
+class MemoryReviewRequest(BaseModel):
+    decision: str
+    note: Optional[str] = None
+
+class ConsolidateRequest(BaseModel):
+    dry_run: bool = False
+    retry_under_review: bool = False
 
 # In-memory session tracking for active reviews
 sessions = {}
+
+# Shown as a reasoning-trace card when each node starts.
+NODE_MESSAGES = {
+    "rag_retrieval": "Retrieving information from historical medical databases...",
+    "care_plan_generation": "Generating care options...",
+    "argument_generation": "Assembling the care team and preparing plan rationale...",
+    "feedback_integration": "Interpreting your feedback as changes to the argument graph...",
+    "argument_validation": "Verifying arguments...",
+    "qbaf_evaluation": "Weighing arguments in the argumentation framework...",
+    "revision_planning": "Choosing how to update the care plan...",
+    "plan_revision": "Writing the care plan...",
+    "scheduling": "Checking provider availability...",
+    "memory_reflection": "Learning from your contestations...",
+}
+
 
 def initial_state(patient_info, severity="Default", thread_id=None):
     return {
@@ -69,124 +126,199 @@ def initial_state(patient_info, severity="Default", thread_id=None):
         "streaming_chunk": None,
         "partial_response": None,
         "rag_progress": None,
+        "run_mode": "generate",
+        "next_arg_seq": 0,
+        "human_ops_log": [],
+        "plan_feedback": [],
+        "feedback_history": [],
+        "feedback_ops": [],
+        "writer_directives": [],
+        "validation_cache": {},
+        "qbaf": None,
+        "previous_qbaf": None,
+        "revision_plan": None,
+        "care_plan_versions": [],
+        "memory_guidance": {},
+        "memory_reflection": None,
+        "reflected_ops_signature": None,
     }
 
-def format_arguments_display(state):
-    display_text = "## Multi-Agents Collaboration\n\n"
-    if "team_selection_rationale" in state:
-        display_text += f"### AI Team Selection Rationale:\n_{state['team_selection_rationale']}_\n\n"
-    
-    if "healthcare_team" in state and state["healthcare_team"]:
-        display_text += "### Healthcare Team Assembled:\n"
-        for member in state["healthcare_team"]:
-            display_text += f"- **{member['name']}** - {member['role']}\n"
-        display_text += "\n---\n\n"
 
-    for i, option in enumerate(state.get("handling_options", [])):
-        display_text += f"### Option {i+1}: {option}\n\n"
-        option_args = [arg for arg in state.get("arguments", []) if arg.parent_option == option]
-        for arg in option_args:
-            arg_idx = state["arguments"].index(arg)
-            display_text += f"- `[{arg_idx}]` {arg.argument_type.upper()}: {arg.content}\n"
-        display_text += "\n"
-    return display_text
+def _sse(data: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(data, default=str)}\n\n"
+
+
+def pending_changes(state: Dict[str, Any]) -> int:
+    """Contestations of the argument table since the latest plan version."""
+    versions = state.get("care_plan_versions") or []
+    cursor = versions[-1].get("ops_cursor", 0) if versions else 0
+    return max(0, len(state.get("human_ops_log") or []) - cursor)
+
+
+def client_payload(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Everything the review dashboard and plan view need, in one shape."""
+    return {
+        "options": state.get("handling_options") or [],
+        "arguments": arguments_payload(state),
+        "care_plan": state.get("revised_care_plan") or None,
+        "versions": state.get("care_plan_versions") or [],
+        "team": state.get("healthcare_team") or [],
+        "team_rationale": state.get("team_selection_rationale"),
+        "feedback_history": state.get("feedback_history") or [],
+        "pending_changes": pending_changes(state),
+        "memory_reflection": state.get("memory_reflection"),
+        # Per-argument strength and impact on its option, as of the latest evaluation.
+        "qbaf_arguments": (state.get("qbaf") or {}).get("arguments", {}),
+    }
+
+
+def _review_note(state: Dict[str, Any]) -> str:
+    arguments = state.get("arguments") or []
+    team = ", ".join(member["name"] for member in state.get("healthcare_team") or [])
+    learned = sum(1 for arg in arguments if arg.source == "memory")
+    note = (f"Your care team ({team or 'multidisciplinary'}) drafted {len(arguments)} arguments across "
+            f"{len(state.get('handling_options') or [])} care options")
+    note += f", including {learned} drawn from lessons of earlier reviews." if learned else "."
+    note += " Review them in the panel on the right, then accept to generate the care plan."
+    if state.get("team_selection_rationale"):
+        note += f"\n\n_{clip_text(state['team_selection_rationale'], 400)}_"
+    return note
+
+
+def _version_note(plan: Dict[str, Any]) -> str:
+    note = f"Care plan v{plan['version']} is ready ({plan['strategy_label'].lower()})."
+    if plan["version"] > 1:
+        note += f" {plan['rationale']}"
+    return note
+
+
+def _record_node(session: Dict[str, Any], node_name: str, node_state: Dict[str, Any]) -> None:
+    """Session-level side effects of a completed node; runs in the graph worker so
+    they happen even if the browser disconnects mid-run."""
+    chat: ChatMemory = session["chat"]
+    if node_name == "human_review":
+        chat.add_event(f"Care team drafted {len(node_state.get('arguments') or [])} arguments for review.")
+    elif node_name == "plan_revision":
+        plan = node_state.get("revised_care_plan") or {}
+        chat.add_event(f"Care plan v{plan.get('version')} generated ({plan.get('strategy_label')}): "
+                       f"{plan.get('change_summary', '')}")
+
+
+def _node_events(session: Dict[str, Any], node_name: str, node_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """SSE events for a completed node."""
+    if node_name == "human_review":
+        payload = client_payload(node_state)
+        return [
+            {"type": "message", "node": "human_review", "content": _review_note(node_state)},
+            {"type": "review_needed", "options": payload["options"], "arguments": payload["arguments"],
+             "team": payload["team"]},
+        ]
+    if node_name == "revision_planning":
+        plan = node_state.get("revision_plan") or {}
+        return [{"type": "revision", "strategy": plan.get("strategy"), "strategy_label": plan.get("strategy_label"),
+                 "rationale": plan.get("rationale"), "sections": plan.get("sections")}]
+    if node_name == "plan_revision":
+        payload = client_payload(node_state)
+        return [
+            {"type": "final_plan", **payload},
+            {"type": "message", "node": "system", "content": _version_note(payload["care_plan"])},
+        ]
+    if node_name == "scheduling":
+        return [{"type": "schedule", "care_plan": node_state.get("revised_care_plan"),
+                 "versions": node_state.get("care_plan_versions") or []}]
+    if node_name == "memory_reflection" and node_state.get("memory_reflection"):
+        return [{"type": "memory", "reflection": node_state["memory_reflection"]}]
+    return []
+
+
+def _start_run(session: Dict[str, Any], graph_input: Optional[Dict[str, Any]]) -> "queue.Queue":
+    """Run the graph in a worker thread; events are queued for the SSE response."""
+    event_q: "queue.Queue" = queue.Queue()
+
+    def worker():
+        try:
+            for mode, chunk in graph.stream(graph_input, session["cfg"], stream_mode=["tasks", "updates"]):
+                if mode == "updates":
+                    for node_name, node_state in chunk.items():
+                        if node_name.startswith("__") or not isinstance(node_state, dict):
+                            continue  # e.g. the "__interrupt__" marker after human review
+                        session["state"] = node_state
+                        _record_node(session, node_name, node_state)
+                event_q.put((mode, chunk))
+        except Exception as e:
+            traceback.print_exc()
+            event_q.put(("error", str(e)))
+        finally:
+            session["running"] = False
+            event_q.put(("done", None))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return event_q
+
 
 @app.post("/api/chat/start")
 async def start_generation(req: StartRequest):
     thread_id = f"session_{uuid4().hex}"
     cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 200}
     state = initial_state(req.patient_info, req.severity, thread_id)
-    sessions[thread_id] = {"cfg": cfg, "state": state}
+    sessions[thread_id] = {
+        "cfg": cfg,
+        "state": state,
+        "next_input": state,
+        "running": False,
+        "lock": threading.Lock(),
+        "chat": ChatMemory(),
+        "chat_lock": threading.Lock(),
+    }
     return {"thread_id": thread_id}
 
 @app.get("/api/chat/stream/{thread_id}")
 async def stream_generation(thread_id: str):
     async def event_generator():
-        if thread_id not in sessions:
-            yield f"data: {json.dumps({'type': 'error', 'content': 'Thread not found'})}\n\n"
+        session = sessions.get(thread_id)
+        if session is None:
+            yield _sse({'type': 'error', 'content': 'Thread not found'})
             return
-            
-        session = sessions[thread_id]
-        cfg = session["cfg"]
-        state = session.get("state")
-        
+        with session["lock"]:
+            if session["running"]:
+                yield _sse({"type": "error", "content": "A generation is already running for this session."})
+                return
+            session["running"] = True
+            graph_input = session.pop("next_input", None)
+        active_progress.pop(thread_id, None)  # drop progress text left over from the previous run
+        event_q = _start_run(session, graph_input)
+
         try:
-            import threading
-            import queue
-            event_q = queue.Queue()
-            
-            def run_graph():
-                try:
-                    for event in graph.stream(state if state else None, cfg):
-                        event_q.put(("event", event))
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    event_q.put(("error", str(e)))
-                finally:
-                    event_q.put(("done", None))
-                    
-            t = threading.Thread(target=run_graph)
-            t.start()
-            
             last_progress = {}
             is_done = False
-            
+
+            def reset_stream():
+                last_progress["stream_len"] = 0
+                last_progress["sub_step"] = ""
+                if thread_id in active_progress:
+                    active_progress[thread_id]["current_stream_text"] = ""
+                    active_progress[thread_id]["current_sub_step"] = ""
+
             while not is_done or not event_q.empty():
                 while not event_q.empty():
                     msg_type, data = event_q.get()
-                    if msg_type == "event":
+                    if msg_type == "tasks":
+                        # A node is starting: open a reasoning-trace card for it.
+                        if "input" in data and data.get("name") in NODE_MESSAGES:
+                            reset_stream()
+                            yield _sse({'type': 'message', 'node': data['name'], 'content': NODE_MESSAGES[data['name']]})
+                    elif msg_type == "updates":
                         for node_name, node_state in data.items():
-                            sessions[thread_id]["state"] = node_state
-                            # Reset stream cursor and sub-step when a new node completes
-                            last_progress["stream_len"] = 0
-                            last_progress["sub_step"] = ""
-                            if thread_id in active_progress:
-                                active_progress[thread_id]["current_stream_text"] = ""
-                                active_progress[thread_id]["current_sub_step"] = ""
-                            
-                            if node_name == "rag_retrieval":
-                                msg = "Retrieving information from historical medical databases..."
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
-                            elif node_name == "care_plan_generation":
-                                msg = "Generating care plan..."
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
-                            elif node_name == "argument_generation":
-                                msg = "Preparing plan rationale..."
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
-                            elif node_name == "human_review":
-                                display = format_arguments_display(node_state)
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': display})}\n\n"
-                                
-                                args_list = []
-                                for i, arg in enumerate(node_state.get('arguments', [])):
-                                    args_list.append({
-                                        'id': i,
-                                        'content': arg.content,
-                                        'type': arg.argument_type,
-                                        'option': arg.parent_option,
-                                        'role': arg.agent_role or 'General'
-                                    })
-                                
-                                yield f"data: {json.dumps({'type': 'review_needed', 'options': node_state.get('handling_options', []), 'arguments': args_list})}\n\n"
-                                return
-                            elif node_name == "argument_validation":
-                                msg = "Validating arguments..."
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
-                            elif node_name == "plan_revision":
-                                msg = "Revising care plan..."
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
-                            elif node_name == "scheduling":
-                                msg = "Checking provider availability..."
-                                if "scheduling_slots" in node_state:
-                                    msg += "\n\nProviders available:\n" + str(node_state["scheduling_slots"])
-                                yield f"data: {json.dumps({'type': 'message', 'node': node_name, 'content': msg})}\n\n"
+                            if node_name.startswith("__") or not isinstance(node_state, dict):
+                                continue
+                            reset_stream()
+                            for event in _node_events(session, node_name, node_state):
+                                yield _sse(event)
                     elif msg_type == "error":
-                        yield f"data: {json.dumps({'type': 'message', 'node': 'Error', 'content': str(data)})}\n\n"
-                        is_done = True
+                        yield _sse({'type': 'message', 'node': 'Error', 'content': str(data)})
                     elif msg_type == "done":
                         is_done = True
-                        
+
                 # Check for global real-time progress updates
                 if not is_done:
                     tracker = active_progress.get(thread_id, {})
@@ -197,11 +329,11 @@ async def stream_generation(thread_id: str):
 
                     if prog_arg and prog_arg != last_progress.get("arg"):
                         last_progress["arg"] = prog_arg
-                        yield f"data: {json.dumps({'type': 'message', 'node': 'progress', 'content': prog_arg})}\n\n"
-                        
+                        yield _sse({'type': 'message', 'node': 'progress', 'content': prog_arg})
+
                     if prog_val and prog_val != last_progress.get("val"):
                         last_progress["val"] = prog_val
-                        yield f"data: {json.dumps({'type': 'message', 'node': 'progress', 'content': prog_val})}\n\n"
+                        yield _sse({'type': 'message', 'node': 'progress', 'content': prog_val})
 
                     # Emit granular sub-step cards
                     if sub_step and sub_step != last_progress.get("sub_step"):
@@ -209,101 +341,293 @@ async def stream_generation(thread_id: str):
                         last_progress["stream_len"] = 0  # reset stream for new sub-step
                         if thread_id in active_progress:
                             active_progress[thread_id]["current_stream_text"] = ""
-                        yield f"data: {json.dumps({'type': 'sub_step', 'title': sub_step})}\n\n"
+                        yield _sse({'type': 'sub_step', 'title': sub_step})
 
                     # Stream LLM text to frontend – send only new characters since last poll
                     last_len = last_progress.get("stream_len", 0)
                     if stream_text and len(stream_text) > last_len:
                         new_chunk = stream_text[last_len:]
                         last_progress["stream_len"] = len(stream_text)
-                        yield f"data: {json.dumps({'type': 'stream_text', 'chunk': new_chunk, 'full': stream_text})}\n\n"
+                        yield _sse({'type': 'stream_text', 'chunk': new_chunk, 'full': stream_text})
 
                 await asyncio.sleep(0.05)
-                    
-            # Completed
-            if sessions[thread_id].get("state") and "revised_care_plan" in sessions[thread_id]["state"]:
-                cp = sessions[thread_id]["state"]["revised_care_plan"]
-                # Yield raw care plan data — no chat bubble
-                yield f"data: {json.dumps({'type': 'final_plan', 'care_plan': cp})}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            yield _sse({'type': 'done', 'pending_changes': pending_changes(session.get("state") or {})})
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'message', 'node': 'Error', 'content': str(e)})}\n\n"
-            
+            yield _sse({'type': 'message', 'node': 'Error', 'content': str(e)})
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _busy(session) -> Optional[JSONResponse]:
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    if session["running"]:
+        return JSONResponse(status_code=409, content={"error": "The care plan is still being generated."})
+    return None
+
+
+@app.get("/api/chat/state/{thread_id}")
+async def get_session_state(thread_id: str):
+    session = sessions.get(thread_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    payload = client_payload(session["state"] or {})
+    service = get_memory_service()
+    if service is not None and service.reflection_status(thread_id):
+        payload["memory_reflection"] = service.reflection_status(thread_id)
+    return {"running": session["running"], **payload}
+
 
 @app.post("/api/chat/action/{thread_id}")
 async def handle_action(thread_id: str, req: ActionRequest):
-    if thread_id not in sessions:
-        return {"error": "Session not found"}
-        
-    session = sessions[thread_id]
+    session = sessions.get(thread_id)
+    blocked = _busy(session)
+    if blocked is not None:
+        return blocked
+
     state = session["state"]
+    ensure_argument_ids(state)
     action = req.action.lower().strip()
-    
+    chat: ChatMemory = session["chat"]
+
     if action == "accept":
         state["human_review_complete"] = True
-        session["state"] = None # Let graph stream use configured state entirely
-        
-        cfg = session["cfg"]
-        graph.update_state(cfg, {"human_review_complete": True, "arguments": state["arguments"]})
-    elif action == "remove":
-        if req.target_id is not None and 0 <= req.target_id < len(state["arguments"]):
-            state["arguments"].pop(req.target_id)
-    elif action == "modify":
-        if req.target_id is not None and 0 <= req.target_id < len(state["arguments"]):
-            if req.new_content:
-                state["arguments"][req.target_id].content = req.new_content
-    elif action == "add":
-        if req.new_content:
-            new_arg = Argument(
-                content=req.new_content,
-                argument_type=req.new_type or "support",
-                parent_option=req.new_option or state.get("handling_options", [""])[0]
-            )
-            state["arguments"].append(new_arg)
-            
-    return {"status": "ok"}
+        session["next_input"] = None  # resume the paused graph
+        graph.update_state(session["cfg"], {
+            "human_review_complete": True,
+            "arguments": state["arguments"],
+            "human_ops_log": state.get("human_ops_log") or [],
+            "next_arg_seq": state.get("next_arg_seq") or 0,
+        })
+        chat.add_event(f"Clinician accepted the arguments after {len(state.get('human_ops_log') or [])} change(s).")
+        return {"status": "ok"}
+
+    arguments = state["arguments"]
+    target = find_argument(arguments, req.arg_id)
+    if target is None and req.target_id is not None and 0 <= req.target_id < len(arguments):
+        target = arguments[req.target_id]
+
+    if action == "remove" and target is not None and target.human_status != "rejected":
+        target.human_status = "rejected"
+        target.rejection_reason = req.reason
+        record_human_op(state, "reject", target, origin="table", reason=req.reason)
+        chat.add_event(f"Clinician removed {target.arg_id}: {clip_text(target.content, 120)}")
+    elif action == "restore" and target is not None and target.human_status == "rejected":
+        if is_human_authored(target):
+            target.human_status = "added"
+        else:
+            target.human_status = "edited" if target.original_content is not None else "unreviewed"
+        target.rejection_reason = None
+        record_human_op(state, "restore", target, origin="table")
+        chat.add_event(f"Clinician restored {target.arg_id}.")
+    elif action == "modify" and target is not None and req.new_content and req.new_content != target.content:
+        before = target.content
+        if target.original_content is None:
+            target.original_content = before
+        target.content = req.new_content
+        if target.human_status not in ("added",):
+            target.human_status = "edited"
+        record_human_op(state, "edit", target, origin="table", before=before)
+        chat.add_event(f"Clinician edited {target.arg_id}: {clip_text(req.new_content, 120)}")
+    elif action == "add" and req.new_content:
+        options = state.get("handling_options") or [""]
+        new_arg = Argument(
+            content=req.new_content,
+            argument_type="attack" if req.new_type in ("attack", "challenge") else "support",
+            parent_option=resolve_option(options, req.new_option) or options[0],
+            agent_role=req.new_role or "Clinician",
+            source="human",
+            human_status="added",
+        )
+        new_arg.arg_id = new_arg_id(state)
+        arguments.append(new_arg)
+        record_human_op(state, "add", new_arg, origin="table")
+        chat.add_event(f"Clinician added {new_arg.arg_id} ({new_arg.argument_type}): {clip_text(new_arg.content, 120)}")
+
+    return {"status": "ok", "arguments": arguments_payload(state), "pending_changes": pending_changes(state)}
 
 
-class ChatMessageRequest(BaseModel):
-    message: str
+@app.post("/api/chat/regenerate/{thread_id}")
+async def regenerate_plan(thread_id: str, req: RegenerateRequest):
+    """Re-enter the graph to apply the clinician's contestation of the plan."""
+    session = sessions.get(thread_id)
+    blocked = _busy(session)
+    if blocked is not None:
+        return blocked
+    state = session["state"]
+    if not state.get("care_plan_versions"):
+        return JSONResponse(status_code=400, content={"error": "No care plan yet: accept the arguments first."})
+    feedback = [item.model_dump() for item in req.feedback if item.text.strip()]
+    mode = "feedback" if feedback else "contest"
+    session["next_input"] = {
+        "run_mode": mode,
+        "plan_feedback": feedback,
+        "feedback_ops": [],
+        "arguments": state["arguments"],
+        "human_ops_log": state.get("human_ops_log") or [],
+        "next_arg_seq": state.get("next_arg_seq") or 0,
+        "care_plan_versions": state.get("care_plan_versions") or [],
+        "human_review_complete": True,
+    }
+    chat: ChatMemory = session["chat"]
+    for item in feedback:
+        anchor = f" on {item['section_id']}" if item.get("section_id") else ""
+        chat.add_event(f"Clinician feedback{anchor}: {clip_text(item['text'], 160)}")
+    chat.add_event(f"Regeneration requested ({len(feedback)} feedback item(s), {pending_changes(state)} table change(s)).")
+    return {"status": "ok", "mode": mode}
+
+
+def _approval_outcomes(state: Dict[str, Any]) -> Dict[str, str]:
+    """Usage outcomes for the memory used in an approved plan."""
+    arguments = state.get("arguments") or []
+    outcomes: Dict[str, str] = {}
+    contested_agents = any(arg.source == "agent" and arg.human_status == "rejected" for arg in arguments)
+    if not contested_agents:
+        for records in (state.get("memory_guidance") or {}).values():
+            for record in records:
+                outcomes.setdefault(record["memory_id"], "successful")
+    for arg in arguments:
+        if arg.source == "memory" and arg.memory_id:
+            outcomes[arg.memory_id] = "contested" if arg.human_status in ("rejected", "edited") else "successful"
+    return outcomes
+
+
+@app.post("/api/chat/approve/{thread_id}")
+async def approve_plan(thread_id: str, req: ApproveRequest):
+    session = sessions.get(thread_id)
+    blocked = _busy(session)
+    if blocked is not None:
+        return blocked
+    state = session["state"]
+    versions = state.get("care_plan_versions") or []
+    if not versions:
+        return JSONResponse(status_code=400, content={"error": "No care plan to approve."})
+    number = req.version or versions[-1]["version"]
+    plan = next((version for version in versions if version["version"] == number), None)
+    if plan is None:
+        return JSONResponse(status_code=404, content={"error": f"Version {number} not found."})
+    plan["status"] = "approved"
+    plan["approved_at"] = now_iso()
+    if number == versions[-1]["version"]:
+        state["revised_care_plan"] = plan
+        service = get_memory_service()
+        if service is not None:
+            service.record_outcomes(thread_id, _approval_outcomes(state))
+            # Fold the outcomes into usage statistics without blocking the response.
+            service.consolidate_in_background()
+    session["chat"].add_event(f"Clinician approved care plan v{number}.")
+    return {"status": "ok", "care_plan": state.get("revised_care_plan"), "versions": versions}
+
+
+@app.get("/api/care-plan/{thread_id}/pdf")
+async def care_plan_pdf(thread_id: str, version: Optional[int] = None):
+    from pdf_export import render_care_plan_pdf
+
+    session = sessions.get(thread_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    versions = (session["state"] or {}).get("care_plan_versions") or []
+    plan = next((v for v in versions if v["version"] == version), None) if version else (versions[-1] if versions else None)
+    if plan is None:
+        return JSONResponse(status_code=404, content={"error": "No care plan available."})
+    pdf = await asyncio.to_thread(render_care_plan_pdf, plan)
+    filename = f"care-plan-v{plan['version']}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
 
 @app.post("/api/chat/message/{thread_id}")
 async def send_chat_message(thread_id: str, req: ChatMessageRequest):
-    """Stream a follow-up LLM response about the generated care plan."""
-    from node import call_llm_stream
+    """Stream a follow-up LLM response about the generated care plan.
 
+    The prompt carries a compact encoding of every argument and of the current
+    plan, plus a rolling summary of the conversation (see chat_context.py)."""
     session = sessions.get(thread_id)
     if not session:
         return {"error": "Session not found"}
 
-    state = session.get("state") or {}
-    care_plan = ""
-    if state.get("revised_care_plan"):
-        care_plan = state["revised_care_plan"].get("recommendations", "")
-    patient_info = state.get("patient_info", "")
+    chat: ChatMemory = session["chat"]
+    event_q: "queue.Queue" = queue.Queue()
 
-    system_prompt = f"""You are an expert geriatric care coordinator. The following care plan has been generated for a patient.
-Answer the user's follow-up question clearly, concisely, and compassionately.
+    def worker():
+        full = ""
+        with session["chat_lock"]:
+            try:
+                prompt = chat.build_prompt(chat.case_context(session.get("state") or {}), req.message)
+                stats = chat.stats(prompt)
+                for chunk in call_llm_stream(prompt, temperature=0.7, max_tokens=1024):
+                    full += chunk
+                    event_q.put(("chunk", chunk, full))
+                chat.add_turn("user", req.message)
+                chat.add_turn("assistant", full)
+                event_q.put(("done", stats, full))
+                chat.compact(lambda summary_prompt: call_llm(summary_prompt, temperature=0.2, max_tokens=400))
+            except Exception as e:
+                event_q.put(("error", str(e), full))
 
-Patient Information:
-{patient_info}
-
-Generated Care Plan:
-{care_plan[:3000]}
-
-Answer the user's question below:"""
+    threading.Thread(target=worker, daemon=True).start()
 
     async def event_generator():
-        try:
-            full = ""
-            for chunk in call_llm_stream(f"{system_prompt}\n\nUser: {req.message}", temperature=0.7, max_tokens=1024):
-                full += chunk
-                yield f"data: {json.dumps({'type': 'stream_text', 'chunk': chunk, 'full': full})}\n\n"
-            yield f"data: {json.dumps({'type': 'message', 'node': 'bot', 'content': full})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        while True:
+            try:
+                kind, data, full = event_q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.03)
+                continue
+            if kind == "chunk":
+                yield _sse({'type': 'stream_text', 'chunk': data, 'full': full})
+            elif kind == "done":
+                yield _sse({'type': 'message', 'node': 'bot', 'content': full})
+                yield _sse({'type': 'done', 'context': data})
+                return
+            else:
+                yield _sse({'type': 'error', 'content': data})
+                return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/memory")
+async def memory_overview():
+    service = get_memory_service()
+    if service is None:
+        return {"enabled": False}
+    return {"enabled": True, **(await asyncio.to_thread(service.overview))}
+
+
+@app.get("/api/memory/reflection/{thread_id}")
+async def memory_reflection_status(thread_id: str):
+    """Status of the background learning from this case's contestations."""
+    service = get_memory_service()
+    if service is None:
+        return {"status": "disabled"}
+    return service.reflection_status(thread_id) or {"status": "none"}
+
+
+@app.post("/api/memory/consolidate")
+async def memory_consolidate(req: ConsolidateRequest):
+    service = get_memory_service()
+    if service is None:
+        return {"enabled": False}
+    result = await asyncio.to_thread(service.consolidate, req.dry_run, req.retry_under_review)
+    return {
+        "enabled": True,
+        "result": consolidation_summary(result),
+        "events": [event.model_dump() for event in result.events][-100:],
+        **(await asyncio.to_thread(service.overview)),
+    }
+
+
+@app.post("/api/memory/{memory_id}/review")
+async def memory_review(memory_id: str, req: MemoryReviewRequest):
+    service = get_memory_service()
+    if service is None:
+        return {"enabled": False}
+    try:
+        result = await asyncio.to_thread(service.review, memory_id, req.decision, req.note)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"error": f"Memory {memory_id} not found."})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return {"enabled": True, "result": result, **(await asyncio.to_thread(service.overview))}
