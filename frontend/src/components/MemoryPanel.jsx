@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getJSON, postJSON } from '../api'
+import { Brain, ChevronDown, Refresh, Sparkle } from './Icons'
 
 const TYPE_LABELS = { semantic_rule: 'Rule', failure: 'Past error', episodic: 'Past case' }
 const STAGE_LABELS = {
@@ -17,37 +18,41 @@ const FILTERS = [
 ]
 
 function MemoryRecord({ record, used, onReview, busy }) {
-  const reviewable = record.status === 'under_review'
+  const [open, setOpen] = useState(false)
+  const reviewable = record.status === 'under_review' || record.verification_status === 'under_review'
   return (
-    <div className={`memory-record ${used ? 'used' : ''}`}>
-      <div className="memory-record-header">
+    <div className={`memory-record ${used ? 'is-used' : ''}`}>
+      <div className="memory-record-top">
         <span className={`memory-type ${record.memory_type}`}>{TYPE_LABELS[record.memory_type] || record.memory_type}</span>
         <span className="memory-stage">{STAGE_LABELS[record.stage] || record.stage}</span>
-        {used && <span className="memory-used">Used in this case</span>}
-        <span className="memory-id">{record.memory_id}</span>
+        {used && <span className="badge badge-memory">Used in this case</span>}
+        <span className="memory-confidence" title="Confidence">
+          <span className="meter small"><span style={{ width: `${Math.round(100 * record.confidence)}%` }} /></span>
+          {record.confidence.toFixed(2)}
+        </span>
       </div>
       <div className="memory-text">{record.text}</div>
-      {record.recommended_action && !record.text?.includes(record.recommended_action) && (
-        <div className="memory-action">Action: {record.recommended_action}</div>
+      <button type="button" className="link-btn memory-more" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+        <ChevronDown size={13} className={`chip-chevron ${open ? 'open' : ''}`} /> {open ? 'Hide details' : 'Details'}
+      </button>
+      {open && (
+        <div className="memory-details">
+          {record.recommended_action && !record.text?.includes(record.recommended_action) && (
+            <div className="memory-action">Action: {record.recommended_action}</div>
+          )}
+          <div className="memory-stats">
+            <span className="memory-id">{record.memory_id}</span>
+            {record.support != null && <span>{record.support} case{record.support === 1 ? '' : 's'}</span>}
+            {record.conflicts > 0 && <span className="memory-conflicts">{record.conflicts} conflict{record.conflicts === 1 ? '' : 's'}</span>}
+            {record.usage && <span>used {record.usage.used}× ({record.usage.successful} approved, {record.usage.contested} contested)</span>}
+            {(record.review_reason || record.reason) && <span className="memory-reason">{(record.review_reason || record.reason).replaceAll('_', ' ')}</span>}
+          </div>
+        </div>
       )}
-      <div className="memory-stats">
-        <span className="confidence-bar small"><span style={{ width: `${Math.round(100 * record.confidence)}%` }} /></span>
-        <span>confidence {record.confidence.toFixed(2)}</span>
-        {record.support != null && <span>{record.support} case{record.support === 1 ? '' : 's'}</span>}
-        {record.conflicts > 0 && <span className="memory-conflicts">{record.conflicts} conflict{record.conflicts === 1 ? '' : 's'}</span>}
-        {record.usage && <span>used {record.usage.used}× ({record.usage.successful} approved, {record.usage.contested} contested)</span>}
-        {(record.review_reason || record.reason) && <span className="memory-reason">{(record.review_reason || record.reason).replaceAll('_', ' ')}</span>}
-      </div>
       <div className="memory-actions">
-        {(reviewable || record.verification_status === 'under_review') && (
-          <button className="secondary small" disabled={busy} onClick={() => onReview(record.memory_id, 'approve')}>Approve</button>
-        )}
-        {record.status === 'active' && (
-          <button className="secondary small" disabled={busy} onClick={() => onReview(record.memory_id, 'hold')}>Hold for review</button>
-        )}
-        {record.status !== 'deprecated' && (
-          <button className="secondary small danger-text" disabled={busy} onClick={() => onReview(record.memory_id, 'reject')}>Reject</button>
-        )}
+        {reviewable && <button type="button" className="btn soft xs" disabled={busy} onClick={() => onReview(record.memory_id, 'approve')}>Approve</button>}
+        {record.status === 'active' && <button type="button" className="btn ghost xs" disabled={busy} onClick={() => onReview(record.memory_id, 'hold')}>Hold for review</button>}
+        {record.status !== 'deprecated' && <button type="button" className="btn ghost xs danger-text" disabled={busy} onClick={() => onReview(record.memory_id, 'reject')}>Reject</button>}
       </div>
     </div>
   )
@@ -97,7 +102,7 @@ export default function MemoryPanel({ usedIds = [], refreshKey = 0 }) {
   }
 
   if (data && data.enabled === false) {
-    return <div className="memory-panel"><p className="text-muted">Self-evolving memory is disabled (MEMORY_ENABLED=false).</p></div>
+    return <div className="memory-panel"><p className="empty-note">Self-evolving memory is disabled (MEMORY_ENABLED=false).</p></div>
   }
 
   const longTerm = data?.long_term || []
@@ -112,38 +117,39 @@ export default function MemoryPanel({ usedIds = [], refreshKey = 0 }) {
 
   return (
     <div className="memory-panel">
-      <div className="board-header">
-        <div>
-          <h3 style={{ margin: 0 }}>Learned Memory</h3>
-          <p className="text-muted" style={{ margin: '0.2rem 0 0' }}>
-            Lessons consolidated from clinicians' contestations. They guide future care plans and are never treated as evidence.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="secondary" disabled={busy} onClick={load}>Refresh</button>
-          <button disabled={busy} onClick={consolidate}>{busy ? 'Working…' : 'Consolidate Now'}</button>
+      <div className="board-toolbar">
+        <p className="board-intro">
+          Lessons consolidated from clinicians' contestations across cases. They guide future plans and are never treated as evidence.
+        </p>
+        <div className="board-actions">
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={load}><Refresh size={14} /> Refresh</button>
+          <button type="button" className="btn primary sm" disabled={busy} onClick={consolidate}><Sparkle size={14} /> {busy ? 'Working…' : 'Consolidate now'}</button>
         </div>
       </div>
 
-      {notice && <div className="memory-notice">{notice}</div>}
-      {error && <div className="memory-error">{error}</div>}
+      {notice && <div className="inline-banner info">{notice}</div>}
+      {error && <div className="inline-banner warn">{error}</div>}
 
-      <div className="option-tabs">
+      <div className="option-tabs" role="tablist" aria-label="Memory status">
         {FILTERS.map(f => (
-          <button key={f.key} className={`option-tab ${filter === f.key ? 'active' : ''}`} onClick={() => setFilter(f.key)}>
-            <span>{f.label}</span><span className="option-count">{lists[f.key].length}</span>
+          <button key={f.key} type="button" role="tab" aria-selected={filter === f.key}
+            className={`option-tab ${filter === f.key ? 'active' : ''}`} onClick={() => setFilter(f.key)}>
+            <span className="option-tab-label">{f.label}</span><span className="count-pill">{lists[f.key].length}</span>
           </button>
         ))}
       </div>
 
       <div className="memory-list">
-        {!data && !error && <p className="text-muted">Loading memory…</p>}
+        {!data && !error && <p className="empty-note">Loading memory…</p>}
         {data && shown.length === 0 && (
-          <p className="text-muted" style={{ textAlign: 'center', paddingTop: '1.5rem' }}>
-            {filter === 'active'
-              ? 'No lessons yet. They are learned when a clinician contests a care plan and consolidated across cases.'
-              : 'Nothing here.'}
-          </p>
+          <div className="empty-state small">
+            <span className="empty-icon"><Brain size={22} /></span>
+            <p>
+              {filter === 'active'
+                ? 'No lessons yet. They are learned when a clinician contests a care plan, and consolidated across cases.'
+                : 'Nothing here.'}
+            </p>
+          </div>
         )}
         {shown.map(record => (
           <MemoryRecord key={record.memory_id} record={record} used={usedIds.includes(record.memory_id)} onReview={review} busy={busy} />

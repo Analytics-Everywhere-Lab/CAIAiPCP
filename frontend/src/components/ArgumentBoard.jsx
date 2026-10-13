@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { TIER_CLASS } from './CarePlanDocument'
+import { ChevronDown, Edit, Plus, Refresh, Trash, X, CheckCircle } from './Icons'
 
 const SOURCE_BADGES = {
   human: { label: 'Added by clinician', className: 'badge-human' },
@@ -6,32 +8,22 @@ const SOURCE_BADGES = {
   memory: { label: 'Learned from past reviews', className: 'badge-memory' }
 }
 
-const TIER_CLASS = {
-  recommended: 'tier-recommended',
-  conditional: 'tier-conditional',
-  uncertain: 'tier-uncertain',
-  deferred: 'tier-deferred',
-  not_recommended: 'tier-not-recommended'
-}
-
 function stripRoleTag(content) {
   return content?.startsWith('[') && content.indexOf(']') > 0 ? content.slice(content.indexOf(']') + 1).trim() : content
 }
 
-function ArgumentCard({ arg, qbafRow, editable, onSelect, planExists }) {
+function ArgumentCard({ arg, qbafRow, editable, selected, onSelect, planExists }) {
   const source = SOURCE_BADGES[arg.source]
   const pendingReevaluation = planExists && !qbafRow
   return (
-    <div
-      className={`arg-card ${arg.type} ${editable ? 'editable' : ''}`}
-      onClick={() => editable && onSelect(arg)}
-      title={arg.validation_note ? `Verifier: ${arg.validation_note}` : undefined}
-    >
-      <div className="arg-card-badges">
-        <span className={`stance-pill ${arg.type}`}>{arg.type === 'support' ? 'SUPPORT' : 'ATTACK'}</span>
+    <button type="button" className={`arg-card ${arg.type} ${selected ? 'is-selected' : ''}`} disabled={!editable}
+      onClick={() => onSelect(arg)} title={arg.validation_note ? `Verifier: ${arg.validation_note}` : 'Edit or remove this argument'}>
+      <div className="arg-card-top">
+        <span className={`stance-pill ${arg.type}`}>{arg.type === 'support' ? 'Supports' : 'Challenges'}</span>
         <span className="arg-id">{arg.arg_id}</span>
-        {source && <span className={`arg-badge ${source.className}`}>{source.label}{arg.feedback_id ? ` · ${arg.feedback_id}` : ''}</span>}
-        {arg.status === 'edited' && <span className="arg-badge badge-edited">Edited</span>}
+        {source && <span className={`badge ${source.className}`}>{source.label}{arg.feedback_id ? ` · ${arg.feedback_id}` : ''}</span>}
+        {arg.status === 'edited' && <span className="badge badge-edited">Edited</span>}
+        {editable && <Edit size={13} className="arg-edit-hint" />}
       </div>
       {arg.target_arg_id && <div className="arg-target">Responds to {arg.target_arg_id}</div>}
       <div className="arg-text">{stripRoleTag(arg.content)}</div>
@@ -40,8 +32,8 @@ function ArgumentCard({ arg, qbafRow, editable, onSelect, planExists }) {
       )}
       {(arg.score != null || qbafRow) && (
         <div className="arg-metrics">
-          {arg.score != null && <span>Validity {arg.score.toFixed(2)}</span>}
-          {qbafRow && <span>Strength {qbafRow.strength.toFixed(2)}</span>}
+          {arg.score != null && <span>Validity <strong>{arg.score.toFixed(2)}</strong></span>}
+          {qbafRow && <span>Strength <strong>{qbafRow.strength.toFixed(2)}</strong></span>}
           {qbafRow && (
             <span className={qbafRow.contribution >= 0 ? 'impact-up' : 'impact-down'}>
               Impact {qbafRow.contribution >= 0 ? '+' : ''}{qbafRow.contribution.toFixed(2)}
@@ -51,9 +43,9 @@ function ArgumentCard({ arg, qbafRow, editable, onSelect, planExists }) {
       )}
       {pendingReevaluation && <div className="arg-pending">Re-evaluated when you regenerate</div>}
       {arg.flags?.includes('verifier_disagrees') && (
-        <div className="arg-warning">The verifier found weak support for this argument; it still counts with clinician weight.</div>
+        <div className="arg-warning">The verifier found weak support; it still counts with clinician weight.</div>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -64,11 +56,13 @@ export default function ArgumentBoard({
   const [activeOption, setActiveOption] = useState(null)
   const [selectedArg, setSelectedArg] = useState(null)
   const [editContent, setEditContent] = useState('')
-  const [showAddModal, setShowAddModal] = useState(false)
+  const [removeReason, setRemoveReason] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
   const [newArgContent, setNewArgContent] = useState('')
   const [newArgType, setNewArgType] = useState('support')
   const [newArgRole, setNewArgRole] = useState('')
   const [showRemoved, setShowRemoved] = useState(false)
+  const [collapsedRoles, setCollapsedRoles] = useState(() => new Set())
 
   const editable = !loading && (phase === 'review' || phase === 'plan')
   const planExists = phase === 'plan'
@@ -93,10 +87,13 @@ export default function ArgumentBoard({
     columns[column].push(arg)
   })
   const qbafByOption = Object.fromEntries((qbafOptions || []).map(row => [row.option, row]))
+  const activeRow = qbafByOption[activeOption]
 
   const select = (arg) => {
     setSelectedArg(arg)
     setEditContent(arg.content)
+    setRemoveReason('')
+    setShowAdd(false)
   }
   const act = async (action, payload) => {
     await onAction(action, payload)
@@ -106,144 +103,179 @@ export default function ArgumentBoard({
     if (!newArgContent.trim()) return
     await onAction('add', { new_content: newArgContent, new_type: newArgType, new_option: activeOption, new_role: newArgRole })
     setNewArgContent('')
-    setShowAddModal(false)
+    setShowAdd(false)
   }
+  const toggleRole = (role) => setCollapsedRoles(prev => {
+    const next = new Set(prev)
+    if (next.has(role)) next.delete(role)
+    else next.add(role)
+    return next
+  })
 
-  const canRegenerate = pendingChanges > 0 || pendingFeedbackCount > 0
+  const pendingTotal = pendingChanges + pendingFeedbackCount
 
   return (
-    <div className="argument-board">
-      <div className="board-header">
-        <div>
-          <h3 style={{ margin: 0 }}>Interactive Graph Review</h3>
-          <p className="text-muted" style={{ margin: '0.2rem 0 0' }}>
-            {phase === 'review'
-              ? 'Select a care option, then click an argument to edit or remove it.'
-              : 'Contest the arguments behind the plan, then regenerate it.'}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="secondary" disabled={!editable} onClick={() => setShowAddModal(!showAddModal)}>+ Add Argument</button>
-          {phase === 'review' && <button disabled={loading} onClick={onAccept}>Accept All &amp; Continue</button>}
+    <div className="board">
+      <div className="board-toolbar">
+        <p className="board-intro">
+          {phase === 'review'
+            ? 'Each care option was argued by the care team. Click an argument to edit or remove it, or add your own; then accept to write the plan.'
+            : 'Contest the arguments behind the plan: edit, remove or add one, then regenerate the plan.'}
+        </p>
+        <div className="board-actions">
+          <button type="button" className="btn secondary sm" disabled={!editable} onClick={() => { setShowAdd(s => !s); setSelectedArg(null) }}>
+            <Plus size={15} /> Add argument
+          </button>
+          {phase === 'review' && (
+            <button type="button" className="btn primary sm" disabled={loading} onClick={onAccept}>
+              <CheckCircle size={15} /> Accept all &amp; write plan
+            </button>
+          )}
           {planExists && (
-            <button disabled={loading || !canRegenerate} onClick={onRegenerate} title={canRegenerate ? '' : 'Contest an argument or add plan feedback first'}>
-              Regenerate Care Plan
+            <button type="button" className="btn primary sm" disabled={loading || pendingTotal === 0} onClick={onRegenerate}
+              title={pendingTotal ? '' : 'Contest an argument or add plan feedback first'}>
+              <Refresh size={15} /> Regenerate care plan{pendingTotal > 0 && <span className="btn-count">{pendingTotal}</span>}
             </button>
           )}
         </div>
       </div>
 
-      {planExists && canRegenerate && (
-        <div className="pending-banner">
+      {planExists && pendingTotal > 0 && (
+        <div className="inline-banner lavender">
           {pendingChanges > 0 && <span>{pendingChanges} argument change{pendingChanges === 1 ? '' : 's'}</span>}
           {pendingChanges > 0 && pendingFeedbackCount > 0 && <span> and </span>}
-          {pendingFeedbackCount > 0 && <span>{pendingFeedbackCount} plan feedback item{pendingFeedbackCount === 1 ? '' : 's'}</span>}
+          {pendingFeedbackCount > 0 && <span>{pendingFeedbackCount} plan note{pendingFeedbackCount === 1 ? '' : 's'}</span>}
           <span> will be applied when you regenerate the care plan.</span>
         </div>
       )}
 
-      <div className="option-tabs">
+      <div className="option-tabs" role="tablist" aria-label="Care options">
         {options.map((option, idx) => {
           const isActive = activeOption === option
           const count = args.filter(a => a.option === option && a.status !== 'rejected').length
           const row = qbafByOption[option]
           return (
-            <button key={idx} className={`option-tab ${isActive ? 'active' : ''}`} onClick={() => { setActiveOption(option); setSelectedArg(null) }}>
-              <span>Option {idx + 1}</span>
-              <span className="option-count">{count}</span>
-              {row && <span className={`tier-dot ${TIER_CLASS[row.tier]}`} title={`${row.tier_label} (strength ${row.strength.toFixed(2)})`} />}
+            <button key={idx} type="button" role="tab" aria-selected={isActive} className={`option-tab ${isActive ? 'active' : ''}`}
+              onClick={() => { setActiveOption(option); setSelectedArg(null) }} title={option}>
+              {row && <span className={`tier-dot ${TIER_CLASS[row.tier]}`} />}
+              <span className="option-tab-label">Option {idx + 1}</span>
+              <span className="count-pill">{count}</span>
             </button>
           )
         })}
       </div>
 
       {activeOption && (
-        <div className="option-label">
-          <span className="option-label-prefix">Viewing: </span>
-          <span className="option-label-text">{activeOption}</span>
-          {qbafByOption[activeOption] && (
-            <span className={`tier-pill ${TIER_CLASS[qbafByOption[activeOption].tier]}`}>
-              {qbafByOption[activeOption].tier_label} · {qbafByOption[activeOption].strength.toFixed(2)}
-            </span>
+        <div className="option-summary">
+          <div className="option-summary-text">{activeOption}</div>
+          {activeRow && (
+            <span className={`tier-pill ${TIER_CLASS[activeRow.tier]}`}>{activeRow.tier_label} · {activeRow.strength.toFixed(2)}</span>
           )}
         </div>
       )}
 
-      <div className="board-canvas">
-        {Object.keys(columns).length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#94a3b8', paddingTop: '2rem' }}>No arguments for this option yet.</div>
-        ) : (
-          <div className="role-columns">
-            {Object.entries(columns).map(([role, roleArgs]) => (
-              <div key={role} className="role-column">
-                <div className="role-header">{role}</div>
-                {roleArgs.map(arg => (
-                  <ArgumentCard key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable}
-                    onSelect={select} planExists={planExists} />
-                ))}
-              </div>
-            ))}
-          </div>
+      <div className={`board-canvas ${selectedArg || showAdd ? 'has-sheet' : ''}`}>
+        {(selectedArg || showAdd) && (
+          <aside className="sheet" role="dialog" aria-label={selectedArg ? 'Edit argument' : 'Add argument'}>
+            <div className="sheet-header">
+              <h4>{selectedArg ? `Edit argument ${selectedArg.arg_id}` : 'Add an argument'}</h4>
+              <button type="button" className="icon-btn" onClick={() => { setSelectedArg(null); setShowAdd(false) }} aria-label="Close"><X /></button>
+            </div>
+            {selectedArg ? (
+              <>
+                <div className="sheet-meta">
+                  <span className={`stance-pill ${selectedArg.type}`}>{selectedArg.type === 'support' ? 'Supports' : 'Challenges'}</span>
+                  <span>{selectedArg.role}</span>
+                </div>
+                {selectedArg.validation_note && <p className="sheet-note">Verifier: {selectedArg.validation_note}</p>}
+                <textarea className="input" rows={5} value={editContent} onChange={e => setEditContent(e.target.value)} />
+                <input className="input" placeholder="Why remove it? (optional, helps the system learn)" value={removeReason}
+                  onChange={e => setRemoveReason(e.target.value)} />
+                <div className="sheet-actions">
+                  <button type="button" className="btn danger-soft sm" onClick={() => act('remove', { arg_id: selectedArg.arg_id, reason: removeReason || undefined })}>
+                    <Trash size={14} /> Remove
+                  </button>
+                  <button type="button" className="btn primary sm" disabled={!editContent.trim() || editContent === selectedArg.content}
+                    onClick={() => act('modify', { arg_id: selectedArg.arg_id, new_content: editContent })}>
+                    Save edits
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="field"><span className="field-label">Care option</span>
+                  <select className="input" value={activeOption || ''} onChange={e => setActiveOption(e.target.value)}>
+                    {options.map((opt, idx) => <option key={idx} value={opt}>{`Option ${idx + 1}: ${opt}`}</option>)}
+                  </select>
+                </label>
+                <div className="field-grid">
+                  <label className="field"><span className="field-label">Stance</span>
+                    <select className="input" value={newArgType} onChange={e => setNewArgType(e.target.value)}>
+                      <option value="support">Supports the option</option>
+                      <option value="attack">Challenges the option</option>
+                    </select>
+                  </label>
+                  <label className="field"><span className="field-label">Role</span>
+                    <select className="input" value={newArgRole} onChange={e => setNewArgRole(e.target.value)}>
+                      {roles.map((role, idx) => <option key={idx} value={role}>{role}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <label className="field"><span className="field-label">Argument</span>
+                  <textarea className="input" rows={4} value={newArgContent} onChange={e => setNewArgContent(e.target.value)}
+                    placeholder="e.g. Her daughter visits daily and can supervise the home modifications." />
+                </label>
+                <div className="sheet-actions">
+                  <button type="button" className="btn primary sm" disabled={!newArgContent.trim()} onClick={addArgument}>
+                    <Plus size={14} /> Add argument
+                  </button>
+                </div>
+              </>
+            )}
+          </aside>
         )}
 
-        {removed.length > 0 && (
-          <div className="removed-args">
-            <button className="link-button" onClick={() => setShowRemoved(!showRemoved)}>
-              {showRemoved ? 'Hide' : 'Show'} removed arguments ({removed.length})
-            </button>
-            {showRemoved && removed.map(arg => (
-              <div key={arg.arg_id} className="removed-arg">
-                <span className="arg-id">{arg.arg_id}</span>
-                <span className="removed-text">{stripRoleTag(arg.content)}</span>
-                {arg.rejection_reason && <span className="removed-reason">({arg.rejection_reason})</span>}
-                <button className="secondary small" disabled={!editable} onClick={() => onAction('restore', { arg_id: arg.arg_id })}>Restore</button>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="board-main">
+          {Object.keys(columns).length === 0 ? (
+            <div className="empty-note">No arguments for this option yet.</div>
+          ) : (
+            <div className="role-columns">
+              {Object.entries(columns).map(([role, roleArgs]) => {
+                const isCollapsed = collapsedRoles.has(role)
+                return (
+                  <div key={role} className={`role-column ${isCollapsed ? 'is-collapsed' : ''}`}>
+                    <button type="button" className="role-header" onClick={() => toggleRole(role)} aria-expanded={!isCollapsed}>
+                      <span className="role-name">{role}</span>
+                      <span className="count-pill">{roleArgs.length}</span>
+                      <ChevronDown size={14} className="role-chevron" />
+                    </button>
+                    {!isCollapsed && roleArgs.map(arg => (
+                      <ArgumentCard key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable}
+                        selected={selectedArg?.arg_id === arg.arg_id} onSelect={select} planExists={planExists} />
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
-        {selectedArg && (
-          <div className="floating-panel" style={{ top: 20, right: 20 }}>
-            <div className="floating-panel-header">
-              <h4 style={{ margin: 0 }}>Edit Argument {selectedArg.arg_id}</h4>
-              <button className="secondary" style={{ padding: '0.2rem 0.5rem' }} onClick={() => setSelectedArg(null)}>x</button>
+          {removed.length > 0 && (
+            <div className="removed-args">
+              <button type="button" className="link-btn" onClick={() => setShowRemoved(!showRemoved)} aria-expanded={showRemoved}>
+                <ChevronDown size={13} className={`chip-chevron ${showRemoved ? 'open' : ''}`} />
+                {showRemoved ? 'Hide' : 'Show'} removed arguments ({removed.length})
+              </button>
+              {showRemoved && removed.map(arg => (
+                <div key={arg.arg_id} className="removed-arg">
+                  <span className="arg-id">{arg.arg_id}</span>
+                  <span className="removed-text">{stripRoleTag(arg.content)}</span>
+                  {arg.rejection_reason && <span className="removed-reason">({arg.rejection_reason})</span>}
+                  <button type="button" className="btn ghost xs" disabled={!editable} onClick={() => onAction('restore', { arg_id: arg.arg_id })}>Restore</button>
+                </div>
+              ))}
             </div>
-            <div style={{ marginBottom: '1rem', fontSize: '0.8rem', color: '#64748b' }}>
-              Option: {selectedArg.option} <br /> Type: {selectedArg.type}
-              {selectedArg.validation_note && <><br />Verifier: {selectedArg.validation_note}</>}
-            </div>
-            <textarea style={{ width: '100%', minHeight: '100px', marginBottom: '1rem' }} value={editContent} onChange={e => setEditContent(e.target.value)} />
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button className="danger" onClick={() => act('remove', { arg_id: selectedArg.arg_id })}>Remove Node</button>
-              <button onClick={() => act('modify', { arg_id: selectedArg.arg_id, new_content: editContent })}>Save Edits</button>
-            </div>
-          </div>
-        )}
-
-        {showAddModal && (
-          <div className="floating-panel" style={{ top: 20, left: 20 }}>
-            <div className="floating-panel-header">
-              <h4 style={{ margin: 0 }}>Add New Argument</h4>
-              <button className="secondary" style={{ padding: '0.2rem 0.5rem' }} onClick={() => setShowAddModal(false)}>x</button>
-            </div>
-            <label className="field-label">Option to Target</label>
-            <select className="form-control" value={activeOption || ''} onChange={e => setActiveOption(e.target.value)}>
-              {options.map((opt, idx) => <option key={idx} value={opt}>{opt}</option>)}
-            </select>
-            <label className="field-label">Argument Type</label>
-            <select className="form-control" value={newArgType} onChange={e => setNewArgType(e.target.value)}>
-              <option value="support">Support</option>
-              <option value="attack">Challenge / Attack</option>
-            </select>
-            <label className="field-label">Role</label>
-            <select className="form-control" value={newArgRole} onChange={e => setNewArgRole(e.target.value)}>
-              {roles.map((role, idx) => <option key={idx} value={role}>{role}</option>)}
-            </select>
-            <label className="field-label">Content</label>
-            <textarea style={{ width: '100%', minHeight: '80px', marginBottom: '1rem' }} value={newArgContent} onChange={e => setNewArgContent(e.target.value)} placeholder="Type out the argument" />
-            <button style={{ width: '100%' }} disabled={!newArgContent.trim()} onClick={addArgument}>Inject Node</button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

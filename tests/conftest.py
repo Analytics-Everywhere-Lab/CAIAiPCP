@@ -33,6 +33,21 @@ _rag_stub.MedicalVectorDB = FakeVectorDB
 sys.modules["rag.vector_db"] = _rag_stub
 
 
+@pytest.fixture(autouse=True)
+def llm_settings(tmp_path, monkeypatch):
+    """Fresh provider settings for every test, on the scripted local model."""
+    import llm_caller
+    import llm_settings as settings_module
+
+    monkeypatch.setenv("SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    settings_module.reset_settings_cache()
+    llm_caller.clear_status()
+    settings_module.update_settings({"provider": "ollama", "anthropic_model": "claude-opus-5-5"})
+    yield settings_module
+    settings_module.reset_settings_cache()
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     import llm_caller

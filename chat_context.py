@@ -14,7 +14,10 @@ Techniques:
    summary when it grows.
 5. Prefix stability: the case context is cached per plan version and argument
    state, and placed before the volatile conversation, so Ollama can reuse its
-   KV cache for the unchanged prompt prefix across turns.
+   KV cache for the unchanged prompt prefix across turns, and the Claude API
+   serves it from the prompt cache.
+
+Only what the assistant reads is compacted; its answers are written in full.
 """
 import hashlib
 import json
@@ -43,9 +46,11 @@ ROLE_ABBREVIATIONS = {
 STATUS_CODES = {"unreviewed": "-", "edited": "edited", "added": "added", "rejected": "removed"}
 
 SYSTEM_PROMPT = """You are an expert geriatric care coordinator assisting a clinician with one patient's aging-in-place care plan.
-You know every argument the care team weighed (+ supports an option, - challenges it) and the current version of the plan, given below in compact form.
-Answer clearly, concisely and compassionately. Refer to arguments by id (e.g. A3) and options by id (e.g. O1) when it helps.
-If the clinician wants the plan changed, say they can leave feedback on the plan or edit the argument table, then regenerate.
+You know every argument the care team weighed (+ supports an option, - challenges it) and the current version of the plan.
+They are given below in a compact machine notation that only saves reading cost; never answer in that notation.
+Answer the clinician fully, in clear and compassionate clinical prose. Use Markdown (short headings, lists, tables) when it helps.
+Describe arguments and options in words, spell out role abbreviations (RN = Registered Nurse), and cite ids such as A3 or O1 only in parentheses.
+If the clinician wants the plan changed, say they can add feedback notes on the plan or edit the argument table, then regenerate.
 Do not invent clinical facts that are not in the context."""
 
 
@@ -220,8 +225,13 @@ class ChatMemory:
         self.compactions += 1
         return True
 
+    @staticmethod
+    def prompt_prefix(case_context: str) -> str:
+        """The stable head of every chat prompt for this plan version and argument state."""
+        return "\n".join([SYSTEM_PROMPT, "", "CASE CONTEXT (compact notation)", case_context])
+
     def build_prompt(self, case_context: str, question: str) -> str:
-        parts = [SYSTEM_PROMPT, "", "CASE CONTEXT (compact)", case_context]
+        parts = [self.prompt_prefix(case_context)]
         if self.summary:
             parts += ["", "CONVERSATION SUMMARY", self.summary]
         if self.events:

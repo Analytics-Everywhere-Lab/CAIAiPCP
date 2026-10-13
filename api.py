@@ -1,7 +1,9 @@
 import json
 import asyncio
+import os
 import queue
 import threading
+import time
 import traceback
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -21,17 +23,22 @@ from arguments import (
 from care_plan_document import now_iso
 from chat_context import ChatMemory
 from graph import create_care_plan_graph
-from llm_caller import call_llm, call_llm_stream
+from env_config import CHAT_MAX_TOKENS
+from llm_caller import LLMError, call_llm, provider_status, stream_text, test_connection
+from llm_settings import get_settings, public_view, update_settings, validate
 from memory.service import consolidation_summary, get_memory_service
 from state import Argument, active_progress
 from utils import clip_text
 
 app = FastAPI(title="Care Plan Generator API")
 
+# Only pages served from this machine may call the API: it can change where patient
+# data is sent (Settings), so arbitrary websites must not reach it from the browser.
+# Add other front-end origins with CORS_ORIGINS="https://a.example,https://b.example".
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[origin.strip() for origin in os.environ.get("CORS_ORIGINS", "").split(",") if origin.strip()],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -73,6 +80,14 @@ class MemoryReviewRequest(BaseModel):
 class ConsolidateRequest(BaseModel):
     dry_run: bool = False
     retry_under_review: bool = False
+
+class SettingsUpdate(BaseModel):
+    provider: Optional[str] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    anthropic_effort: Optional[str] = None
+    anthropic_api_key: Optional[str] = None  # "" clears the saved key
 
 # In-memory session tracking for active reviews
 sessions = {}
@@ -286,14 +301,22 @@ async def stream_generation(thread_id: str):
             session["running"] = True
             graph_input = session.pop("next_input", None)
         active_progress.pop(thread_id, None)  # drop progress text left over from the previous run
+        run_started = time.time()
         event_q = _start_run(session, graph_input)
 
         try:
             last_progress = {}
             is_done = False
 
+            def provider_error_events():
+                # A failing model (bad API key, Ollama down) otherwise only shows up as an empty plan.
+                error = provider_status()["last_error"]
+                if error and error["at"] >= run_started and error["at"] != last_progress.get("error_at"):
+                    last_progress["error_at"] = error["at"]
+                    yield _sse({'type': 'provider_error', 'content': error["message"]})
+
             def reset_stream():
-                last_progress["stream_len"] = 0
+                last_progress["stream_full"] = ""
                 last_progress["sub_step"] = ""
                 if thread_id in active_progress:
                     active_progress[thread_id]["current_stream_text"] = ""
@@ -324,8 +347,10 @@ async def stream_generation(thread_id: str):
                     tracker = active_progress.get(thread_id, {})
                     prog_arg = tracker.get("argument_generation_progress")
                     prog_val = tracker.get("validation_progress")
-                    stream_text = tracker.get("current_stream_text", "")
+                    live_text = tracker.get("current_stream_text", "")
                     sub_step = tracker.get("current_sub_step", "")
+                    for event in provider_error_events():
+                        yield event
 
                     if prog_arg and prog_arg != last_progress.get("arg"):
                         last_progress["arg"] = prog_arg
@@ -338,20 +363,23 @@ async def stream_generation(thread_id: str):
                     # Emit granular sub-step cards
                     if sub_step and sub_step != last_progress.get("sub_step"):
                         last_progress["sub_step"] = sub_step
-                        last_progress["stream_len"] = 0  # reset stream for new sub-step
+                        last_progress["stream_full"] = ""  # reset stream for new sub-step
                         if thread_id in active_progress:
                             active_progress[thread_id]["current_stream_text"] = ""
                         yield _sse({'type': 'sub_step', 'title': sub_step})
 
-                    # Stream LLM text to frontend – send only new characters since last poll
-                    last_len = last_progress.get("stream_len", 0)
-                    if stream_text and len(stream_text) > last_len:
-                        new_chunk = stream_text[last_len:]
-                        last_progress["stream_len"] = len(stream_text)
-                        yield _sse({'type': 'stream_text', 'chunk': new_chunk, 'full': stream_text})
+                    # Stream LLM text to the frontend. The text is a snapshot: it can also shrink,
+                    # when a Claude fallback model restarts an answer.
+                    previous = last_progress.get("stream_full", "")
+                    if live_text and live_text != previous:
+                        last_progress["stream_full"] = live_text
+                        chunk = live_text[len(previous):] if live_text.startswith(previous) else live_text
+                        yield _sse({'type': 'stream_text', 'chunk': chunk, 'full': live_text})
 
                 await asyncio.sleep(0.05)
 
+            for event in provider_error_events():
+                yield event
             yield _sse({'type': 'done', 'pending_changes': pending_changes(session.get("state") or {})})
         except Exception as e:
             yield _sse({'type': 'message', 'node': 'Error', 'content': str(e)})
@@ -554,11 +582,16 @@ async def send_chat_message(thread_id: str, req: ChatMessageRequest):
         full = ""
         with session["chat_lock"]:
             try:
-                prompt = chat.build_prompt(chat.case_context(session.get("state") or {}), req.message)
+                case_context = chat.case_context(session.get("state") or {})
+                prompt = chat.build_prompt(case_context, req.message)
                 stats = chat.stats(prompt)
-                for chunk in call_llm_stream(prompt, temperature=0.7, max_tokens=1024):
-                    full += chunk
-                    event_q.put(("chunk", chunk, full))
+                # The case context is the stable head of the prompt; with Claude it is
+                # served from the prompt cache on follow-up questions.
+                for full in stream_text(prompt, temperature=0.7, max_tokens=CHAT_MAX_TOKENS,
+                                        cache_prefix=chat.prompt_prefix(case_context), raise_errors=True):
+                    event_q.put(("chunk", "", full))
+                if not full.strip():
+                    raise LLMError("The model returned an empty answer. Try again, or check Settings.")
                 chat.add_turn("user", req.message)
                 chat.add_turn("assistant", full)
                 event_q.put(("done", stats, full))
@@ -586,6 +619,34 @@ async def send_chat_message(thread_id: str, req: ChatMessageRequest):
                 return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _settings_payload(settings=None) -> Dict[str, Any]:
+    return {**public_view(settings), "status": provider_status()}
+
+
+@app.get("/api/settings")
+async def read_settings():
+    return _settings_payload()
+
+
+@app.put("/api/settings")
+async def save_settings(req: SettingsUpdate):
+    try:
+        settings = await asyncio.to_thread(update_settings, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    return _settings_payload(settings)
+
+
+@app.post("/api/settings/test")
+async def check_settings(req: SettingsUpdate):
+    """Check the saved settings, or unsaved changes sent in the body, without saving them."""
+    try:
+        candidate = validate(get_settings(), req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    return await asyncio.to_thread(test_connection, candidate)
 
 
 @app.get("/api/memory")

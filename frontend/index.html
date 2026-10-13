@@ -3,9 +3,23 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Care Plan Generator</title>
+  <meta name="description" content="Contestable AI care planning for aging in place" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <title>Aging-in-Place Care Planner</title>
+  <script>
+    // Apply the saved theme before the first paint to avoid a flash of the wrong theme.
+    (function () {
+      var preference = 'system'
+      try { preference = JSON.parse(localStorage.getItem('caiaipcp:theme')) || 'system' } catch (e) { /* default */ }
+      var dark = preference === 'dark' || (preference === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+    })()
+  </script>
 </head>
 
 <body>

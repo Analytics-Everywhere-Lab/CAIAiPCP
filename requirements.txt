@@ -12,3 +12,4 @@ tqdm==4.67.1
 transformers==4.53.2
 uvicorn==0.29.0
 aiosqlite==0.22.1
+anthropic>=1.13
