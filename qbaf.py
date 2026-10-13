@@ -1,12 +1,24 @@
 """Quantitative Bipolar Argumentation Framework (QBAF) over care options.
 
 Each handling option is a claim node ("this option belongs in the care plan")
-with a neutral base score. Every active argument is a node whose base score is
-its verified validity; it supports or attacks its option, or another argument
-when ``target_arg_id`` is set (e.g. clinician feedback rebutting one specific
-argument). Final strengths use quadratic energy semantics (Potyka, 2018), the
-update SEMV's A-QBAF propagator applies, generalised here to multi-level
-graphs by iterating to a fixed point.
+with a neutral base score. Every active argument is a node; it supports or
+attacks its option, or another argument when ``target_arg_id`` is set (e.g.
+clinician feedback rebutting one specific argument). Final strengths use
+quadratic energy semantics (Potyka, 2018), the update SEMV's A-QBAF propagator
+applies, generalised here to multi-level graphs by iterating to a fixed point.
+
+An argument's base score is its verified validity weighted by how much it
+matters for this patient, both judged when the option's arguments are verified
+together as a group:
+- relevance: points about the patient's main risks and stated goals count in
+  full; secondary points count less, generic or speculative ones least. Without
+  this, every option collects a similar number of pros and cons of similar
+  validity, they cancel out, and every option lands near 0.5.
+- repetition: a point already made by an earlier argument adds corroboration,
+  not a second full vote.
+- rebuttal: when an argument answers an opposing one (a support showing that a
+  concern is manageable), it also attacks that argument, so answered concerns
+  weigh less.
 
 Human contestation enters the framework directly: rejected arguments leave the
 graph, edited ones are re-verified, and clinician-authored arguments blend the
@@ -15,7 +27,7 @@ verifier's validity with a prior of clinician authority.
 import hashlib
 import json
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from arguments import active_arguments, is_human_authored, option_id, option_index
 from env_config import HUMAN_TRUST_PRIOR, HUMAN_TRUST_WEIGHT
@@ -23,6 +35,8 @@ from state import Argument
 from utils import clip_text
 
 OPTION_BASE_SCORE = 0.5
+RELEVANCE_WEIGHTS = {"high": 1.0, "moderate": 0.65, "low": 0.3}
+DUPLICATE_WEIGHT = 0.35
 
 # (lower bound, tier key, label shown in the care plan)
 TIERS = [
@@ -44,11 +58,27 @@ def tier_for(strength: float) -> Dict[str, str]:
     return {"tier": TIERS[-1][1], "tier_label": TIERS[-1][2]}
 
 
-def argument_base_score(arg: Argument) -> float:
+def argument_weighting(arg: Argument, duplicate: bool = False) -> Tuple[float, float]:
+    """(validity, weight) of an argument; its base score is their product.
+
+    An argument not yet verified for relevance keeps its full weight."""
     validity = arg.validity_score if arg.validity_score is not None else 0.5
+    weight = RELEVANCE_WEIGHTS.get(arg.relevance or "", 1.0)
     if is_human_authored(arg):
-        return HUMAN_TRUST_WEIGHT * HUMAN_TRUST_PRIOR + (1.0 - HUMAN_TRUST_WEIGHT) * validity
-    return validity
+        validity = HUMAN_TRUST_WEIGHT * HUMAN_TRUST_PRIOR + (1.0 - HUMAN_TRUST_WEIGHT) * validity
+        weight = max(weight, RELEVANCE_WEIGHTS["moderate"])  # the clinician chose to raise it
+    if duplicate:
+        weight *= DUPLICATE_WEIGHT
+    return validity, weight
+
+
+def argument_base_score(arg: Argument, duplicate: bool = False) -> float:
+    validity, weight = argument_weighting(arg, duplicate)
+    return validity * weight
+
+
+def is_duplicate(arg: Argument, active_ids) -> bool:
+    return bool(arg.same_as) and arg.same_as != arg.arg_id and arg.same_as in active_ids
 
 
 def _h(value: float) -> float:
@@ -103,13 +133,18 @@ def build_graph(options: List[str], arguments: List[Argument]):
             target = option_id(idx)
         else:
             continue  # its option no longer exists
-        nodes[arg.arg_id] = {"kind": "argument", "base": argument_base_score(arg)}
+        nodes[arg.arg_id] = {"kind": "argument", "base": argument_base_score(arg, is_duplicate(arg, active_ids))}
         targets[arg.arg_id] = target
         edges.append({
             "from": arg.arg_id,
             "to": target,
             "relation": "support" if arg.argument_type == "support" else "attack",
         })
+    # Rebuttals found by the group verification: answering an argument weakens it.
+    for arg in active:
+        for answered in arg.rebuts or []:
+            if arg.arg_id in nodes and answered in nodes and answered != arg.arg_id:
+                edges.append({"from": arg.arg_id, "to": answered, "relation": "attack", "kind": "rebuttal"})
 
     def option_of(arg_id: str) -> Optional[str]:
         seen = set()
@@ -132,6 +167,7 @@ def evaluate_qbaf(options: List[str], arguments: List[Argument]) -> Dict[str, An
     strength = propagate(nodes, edges)
 
     by_id = {arg.arg_id: arg for arg in arguments if arg.arg_id}
+    active_ids = {node_id for node_id, node in nodes.items() if node["kind"] == "argument"}
     for arg in arguments:
         arg.strength = strength.get(arg.arg_id) if arg.arg_id in nodes else None
 
@@ -170,11 +206,18 @@ def evaluate_qbaf(options: List[str], arguments: List[Argument]) -> Dict[str, An
             key=lambda pair: pair[1]["contribution"],
         )
         option_strength = strength[oid]
+        decisiveness = abs(option_strength - 0.5) * 2.0
+        grounding = _grounding([arg for arg, _ in attached], active_ids)
         option_rows.append({
             "option_id": oid,
             "option": option,
             "strength": round(option_strength, 4),
-            "confidence": round(abs(option_strength - 0.5) * 2.0, 4),
+            # How decisively the arguments settle this option, scaled by how well
+            # grounded they are: a clear verdict from weak arguments is not confident,
+            # and a balanced verdict from sound arguments is moderately confident.
+            "confidence": round(grounding * (0.5 + 0.5 * decisiveness), 4),
+            "decisiveness": round(decisiveness, 4),
+            "grounding": round(grounding, 4),
             **tier_for(option_strength),
             "support_count": sum(1 for arg, _ in attached if arg.argument_type == "support"),
             "attack_count": sum(1 for arg, _ in attached if arg.argument_type == "attack"),
@@ -200,6 +243,13 @@ def evaluate_qbaf(options: List[str], arguments: List[Argument]) -> Dict[str, An
                     "arguments": argument_rows}, sort_keys=True).encode()
     ).hexdigest()[:16]
     return summary
+
+
+def _grounding(arguments: List[Argument], active_ids) -> float:
+    """Relevance-weighted mean validity of an option's arguments (0 without any)."""
+    pairs = [argument_weighting(arg, is_duplicate(arg, active_ids)) for arg in arguments]
+    total = sum(weight for _, weight in pairs)
+    return sum(validity * weight for validity, weight in pairs) / total if total else 0.0
 
 
 def _driver(arg: Argument, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,6 +314,8 @@ def qbaf_prompt_summary(qbaf: Optional[Dict[str, Any]], max_drivers: int = 3, ma
         lines.append(
             f"{row['option_id']} [{row['tier_label']}, strength {row['strength']:.2f}] {row['option']}"
         )
+        if row.get("review"):
+            lines.append(f"   Verification panel: {clip_text(row['review'], 2 * max_chars)}")
         for driver in row["top_supports"][:max_drivers]:
             lines.append(f"   + {driver['arg_id']} ({driver['contribution']:+.2f}) {clip_text(driver['content'], max_chars)}")
         for driver in row["top_attacks"][:max_drivers]:

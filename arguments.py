@@ -165,6 +165,9 @@ def argument_to_dict(arg: Argument, index: int, options: List[str]) -> Dict[str,
         "strength": round(arg.strength, 3) if arg.strength is not None else None,
         "validation_note": arg.validation_note,
         "flags": list(arg.flags or []),
+        "relevance": arg.relevance,
+        "same_as": arg.same_as,
+        "rebuts": list(arg.rebuts or []),
     }
 
 

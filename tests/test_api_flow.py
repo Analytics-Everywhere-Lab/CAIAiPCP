@@ -8,6 +8,9 @@ PATIENT = ("82-year-old female living alone. Mild cognitive impairment, history 
            "but wants to stay at home.")
 
 
+GROUP_VERIFICATION = "verification panel for an interdisciplinary aging-in-place care plan"
+
+
 def sse_events(response):
     return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
@@ -76,6 +79,17 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
     assert [s["id"] for s in plan["sections"]] == [
         "summary", "goals", "interventions", "implementation", "risks", "monitoring", "coordination"]
     assert {row["tier"] for row in plan["options"]} <= {"recommended", "conditional", "uncertain", "deferred", "not_recommended"}
+    # Arguments are verified per option, in one call each, and weighted by relevance:
+    # the well-grounded home option is recommended rather than stuck near 0.5.
+    assert fake_llm.count(GROUP_VERIFICATION) == 2
+    tiers = {row["option"]: row["tier"] for row in plan["options"]}
+    assert tiers["Home safety assessment and modification"] == "recommended"
+    assert plan["decision_confidence"] >= 0.45
+    reviews = final[0]["option_reviews"]
+    assert reviews["O1"]["summary"].startswith("Strong fit") and reviews["O1"]["rebuttals"]
+    by_id = {a["arg_id"]: a for a in final[0]["arguments"]}
+    answered = reviews["O1"]["rebuttals"][0]
+    assert answered["to"] in by_id[answered["from"]]["rebuts"] and by_id[answered["to"]]["relevance"] == "low"
     assert plan["reference_list"] and plan["reference_list"][0]["id"] == 1
     assert all(arg["score"] is not None for arg in final[0]["arguments"] if arg["status"] != "rejected")
     assert any("v1 is ready" in e["content"] for e in of_type(events, "message") if e["node"] == "system")
@@ -101,10 +115,10 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
     client.post(f"/api/chat/action/{thread_id}", json={"action": "remove", "arg_id": other_attack["arg_id"]})
     state = client.get(f"/api/chat/state/{thread_id}").json()
     assert state["pending_changes"] == 1
-    validations_before = fake_llm.count('Response format: "Validity Score: X.XX"')
+    validations_before = fake_llm.count(GROUP_VERIFICATION)
     assert client.post(f"/api/chat/regenerate/{thread_id}", json={"feedback": []}).json()["mode"] == "contest"
     events = sse_events(client.get(f"/api/chat/stream/{thread_id}"))
-    assert fake_llm.count('Response format: "Validity Score: X.XX"') == validations_before
+    assert fake_llm.count(GROUP_VERIFICATION) == validations_before  # a removal needs no new verification
     plan2 = of_type(events, "final_plan")[0]
     assert plan2["care_plan"]["version"] == 2 and len(plan2["versions"]) == 2
     assert plan2["pending_changes"] == 0
@@ -118,13 +132,12 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
         {"feedback_id": "F1", "op": "directive", "content": "Use plain language for the family.",
          "section_ids": ["risks"], "rationale": "Presentation request."},
     ]}
-    active = sum(1 for a in plan2["arguments"] if a["status"] != "rejected")
-    validations_before = fake_llm.count('Response format: "Validity Score: X.XX"')
+    validations_before = fake_llm.count(GROUP_VERIFICATION)
     client.post(f"/api/chat/regenerate/{thread_id}", json={"feedback": [
         {"text": "The daughter will help with renovations; explain risks simply.", "section_id": "risks",
          "quote": "Falls on stairs"}]})
     events = sse_events(client.get(f"/api/chat/stream/{thread_id}"))
-    assert fake_llm.count('Response format: "Validity Score: X.XX"') - validations_before == active + 1
+    assert fake_llm.count(GROUP_VERIFICATION) - validations_before == 2  # new feedback re-verifies every option
     plan3 = of_type(events, "final_plan")[0]
     v3 = plan3["care_plan"]
     assert v3["version"] == 3 and v3["feedback_applied"][0]["id"] == "F1"
