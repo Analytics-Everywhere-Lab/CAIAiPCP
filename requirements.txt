@@ -3,6 +3,7 @@ datasets==4.0.0
 fastapi==0.110.1
 langgraph==0.6.5
 pydantic>=2.7.4
+reportlab>=4.0
 requests==2.32.4
 sentence_transformers==5.1.0
 sse-starlette==2.0.0
