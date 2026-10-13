@@ -11,10 +11,9 @@ export default function Welcome({ onExample }) {
   return (
     <div className="welcome">
       <div className="welcome-mark"><BrandMark size={64} /></div>
-      <h1>Care plans clinicians can contest</h1>
+      <h1>Aging-in-Place Care Planner</h1>
       <p className="welcome-lead">
-        An interdisciplinary AI care team weighs each option for aging in place. You review its arguments, and the care plan
-        is written from the arguments that hold up.
+        An interdisciplinary AI care team weighs each option for aging in place.
       </p>
       <ol className="welcome-steps">
         {STEPS.map((step, index) => (
