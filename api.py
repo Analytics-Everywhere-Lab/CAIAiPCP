@@ -149,6 +149,7 @@ def initial_state(patient_info, severity="Default", thread_id=None):
         "feedback_ops": [],
         "writer_directives": [],
         "validation_cache": {},
+        "option_reviews": {},
         "qbaf": None,
         "previous_qbaf": None,
         "revision_plan": None,
@@ -184,6 +185,8 @@ def client_payload(state: Dict[str, Any]) -> Dict[str, Any]:
         "memory_reflection": state.get("memory_reflection"),
         # Per-argument strength and impact on its option, as of the latest evaluation.
         "qbaf_arguments": (state.get("qbaf") or {}).get("arguments", {}),
+        # The verification panel's judgement of each option's arguments as a group.
+        "option_reviews": state.get("option_reviews") or {},
     }
 
 
@@ -474,7 +477,8 @@ async def handle_action(thread_id: str, req: ActionRequest):
         record_human_op(state, "add", new_arg, origin="table")
         chat.add_event(f"Clinician added {new_arg.arg_id} ({new_arg.argument_type}): {clip_text(new_arg.content, 120)}")
 
-    return {"status": "ok", "arguments": arguments_payload(state), "pending_changes": pending_changes(state)}
+    return {"status": "ok", "arguments": arguments_payload(state), "pending_changes": pending_changes(state),
+            "option_reviews": state.get("option_reviews") or {}}
 
 
 @app.post("/api/chat/regenerate/{thread_id}")

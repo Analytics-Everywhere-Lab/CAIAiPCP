@@ -27,6 +27,10 @@ class Argument:
     validation_note: Optional[str] = None  # verifier explanation behind validity_score
     strength: Optional[float] = None  # final strength after QBAF propagation
     flags: List[str] = field(default_factory=list)
+    # Set by the group verification of the argument's option (see node.argument_validator).
+    relevance: Optional[str] = None  # "high" | "moderate" | "low" for this patient's decision
+    same_as: Optional[str] = None  # id of an earlier argument making the same point
+    rebuts: List[str] = field(default_factory=list)  # ids of opposing arguments this one answers
 
 
 class GraphState(TypedDict):
@@ -87,6 +91,7 @@ class GraphState(TypedDict):
     feedback_ops: List[Dict[str, Any]]  # QBAF operations derived from plan_feedback
     writer_directives: List[Dict[str, Any]]  # presentation-only feedback for the plan writer
     validation_cache: Dict[str, Dict[str, Any]]
+    option_reviews: Dict[str, Dict[str, Any]]  # group verification per option id
     qbaf: Optional[Dict[str, Any]]
     previous_qbaf: Optional[Dict[str, Any]]
     revision_plan: Optional[Dict[str, Any]]

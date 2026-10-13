@@ -79,7 +79,8 @@ def compact_arguments(state: Dict[str, Any], max_tokens: int) -> str:
         strength = f"{row['strength']:.2f}" if "strength" in row else "-"
         option_lines.append(f"{option_id(index)}|{row.get('tier_label', 'not yet weighed')}|{strength}|{clip_text(option, 160)}")
     arguments = state.get("arguments") or []
-    header = "ARGUMENTS (id|option|stance|role|validity|strength|status|text)"
+    header = ("ARGUMENTS (id|option|stance|role|validity|relevance|strength|status|text; stance: + supports, "
+              "- challenges, >A2 targets A2, xA2 answers A2, =A2 repeats A2; relevance H/M/L for this patient)")
 
     def render(limit: int) -> str:
         rows = [header]
@@ -88,11 +89,15 @@ def compact_arguments(state: Dict[str, Any], max_tokens: int) -> str:
             stance = "+" if arg.argument_type == "support" else "-"
             if arg.target_arg_id:
                 stance += f">{arg.target_arg_id}"
+            stance += "".join(f"x{answered}" for answered in arg.rebuts or [])
+            if arg.same_as:
+                stance += f"={arg.same_as}"
             validity = f"{arg.validity_score:.2f}" if arg.validity_score is not None else "-"
+            relevance = {"high": "H", "moderate": "M", "low": "L"}.get(arg.relevance or "", "-")
             strength = f"{arg.strength:.2f}" if arg.strength is not None else "-"
             rows.append("|".join([
                 arg.arg_id or "?", option_id(idx) if idx is not None else "?", stance, _role(arg.agent_role),
-                validity, strength, STATUS_CODES.get(arg.human_status, arg.human_status),
+                validity, relevance, strength, STATUS_CODES.get(arg.human_status, arg.human_status),
                 clip_text(_strip_role_tag(arg.content), limit),
             ]))
         return "\n".join(option_lines + rows)

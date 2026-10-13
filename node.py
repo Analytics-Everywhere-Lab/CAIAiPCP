@@ -26,6 +26,7 @@ from arguments import (
     is_human_authored,
     net_human_ops,
     option_id,
+    option_index,
     resolve_option,
 )
 from care_plan_document import (
@@ -356,9 +357,11 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                     f"Option {i+1}: [{agent_idx+1}/{len(healthcare_team)}] {agent.name} is analyzing..."
                 ))
 
-            # Agent-specific prompt for supporting arguments
-            support_prompt = f"""{agent.get_perspective_prompt()}
-            
+            # One balanced assessment per discipline and option. Asking separately for
+            # pros and cons forced every option into the same number of each, padding
+            # options with generic concerns (and generic benefits) that cancelled out.
+            assessment_prompt = f"""{agent.get_perspective_prompt()}
+
                 {rag_context}
                 {memory_section}
                 Patient Information:
@@ -367,43 +370,23 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                 Care Option Being Evaluated:
                 {option}
 
-                From your professional perspective as a {agent.role.value}, provide 1-2 supporting arguments for this care option.
-                Focus on aspects most relevant to your expertise: {', '.join(agent.expertise_areas[:3])}
+                Assess this care option for this patient from your perspective as a {agent.role.value}.
+                Give 1-2 supporting arguments and 1-2 concerns, drawing on your expertise in
+                {', '.join(agent.expertise_areas[:3])} and your priorities ({', '.join(agent.focus_priorities[:3])}).
+                Only raise a concern that genuinely applies to this patient; do not pad with generic risks.
+                Write each argument as one or two specific sentences about this patient.
 
-                Format each argument on a new line starting with "Support:"
-                Be specific about benefits from your professional viewpoint."""
+                Format each argument on its own line, starting with "Support:" or "Challenge:"."""
 
             max_toks = get_max_tokens_for_severity(1024, state["severity"])
             if state.get("enable_streaming", False):
-                support_response = ""
-                for support_response in stream_text(support_prompt, temperature=0.7, max_tokens=max_toks):
-                    state["current_argument_stream"] = f"{agent.name}: {support_response}"
-                    _report_progress(state, "current_stream_text", f"{agent.name}: {support_response}")
+                assessment = ""
+                for assessment in stream_text(assessment_prompt, temperature=0.7, max_tokens=max_toks):
+                    state["current_argument_stream"] = f"{agent.name}: {assessment}"
+                    _report_progress(state, "current_stream_text", f"{agent.name}: {assessment}")
             else:
-                support_response = call_llm(support_prompt, temperature=0.7, max_tokens=max_toks)
-
-            # Agent-specific prompt for challenging arguments
-            attack_prompt = f"""{agent.get_perspective_prompt()}
-                {memory_section}
-                Patient Information:
-                {patient_info}
-
-                Care Option Being Evaluated:
-                {option}
-
-                From your professional perspective as a {agent.role.value}, provide 1-2 concerns or challenges about this care option.
-                Focus on risks or limitations most relevant to your expertise: {', '.join(agent.focus_priorities[:3])}
-
-                Format each argument on a new line starting with "Challenge:"
-                Be specific about concerns from your professional viewpoint."""
-
-            if state.get("enable_streaming", False):
-                attack_response = ""
-                for attack_response in stream_text(attack_prompt, temperature=0.7, max_tokens=max_toks):
-                    state["current_argument_stream"] = f"{agent.name}: {attack_response}"
-                    _report_progress(state, "current_stream_text", f"{agent.name}: {attack_response}")
-            else:
-                attack_response = call_llm(attack_prompt, temperature=0.7, max_tokens=max_toks)
+                assessment = call_llm(assessment_prompt, temperature=0.7, max_tokens=max_toks)
+            support_response = attack_response = assessment
 
             # Parse and tag arguments with agent information
             for line in support_response.split("\n"):
@@ -434,11 +417,11 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
             for line in attack_response.split("\n"):
                 clean_line = line.strip().lstrip('*#- ')
-                if clean_line.startswith("Challenge") or clean_line.startswith("Attack"):
+                if clean_line.startswith(("Challenge", "Attack", "Concern")):
                     if ":" in clean_line:
                         arg_content = clean_line.split(":", 1)[1].replace("**", "").strip()
                     else:
-                        arg_content = clean_line.replace("Challenge", "").replace("Attack", "").replace("**", "").strip()
+                        arg_content = re.sub(r"^(Challenge|Attack|Concern)", "", clean_line).replace("**", "").strip()
                     if arg_content:
                         tagged_content = f"[{agent.role.value}] {arg_content}"
                         arg = Argument(
@@ -554,367 +537,334 @@ def human_review(state: GraphState) -> GraphState:
     return state
 
 
-def _validation_key(arg: Argument, state: GraphState, feedback_sig: str) -> str:
-    """Cache key for a verification result: the argument as written, what it targets,
-    the patient, and the clinician feedback in force when it was verified."""
+GROUP_VERIFICATION_ROLE = "verification panel for an interdisciplinary aging-in-place care plan"
+DEFAULT_UNVERIFIED_VALIDITY = 0.6
+
+
+def _argument_signature(arg: Argument, state: GraphState) -> str:
+    """What one argument's verification depends on: its text, stance and target."""
     target = find_argument(state.get("arguments") or [], arg.target_arg_id)
-    basis = "|".join([
-        arg.content, arg.argument_type, arg.parent_option or "", target.content if target else "",
-        hashlib.sha1((state.get("patient_info") or "").encode()).hexdigest(), feedback_sig,
-    ])
-    return hashlib.sha1(basis.encode()).hexdigest()[:20]
+    basis = "|".join([arg.content, arg.argument_type, target.content if target else ""])
+    return hashlib.sha1(basis.encode()).hexdigest()[:16]
 
 
-def _explanation(response: str, marker: str) -> str:
-    """The verifier's explanation without its score line."""
-    text = re.sub(rf"(?i)\**\s*{marker}\s*:?\s*\**\s*[0-9.]+\s*\**", " ", response or "")
-    return clip_text(text.replace("**", ""), 280)
+def _group_basis(option: str, state: GraphState, feedback_sig: str) -> str:
+    """What every result in an option group depends on: the option, the patient and
+    the clinician feedback in force."""
+    patient = hashlib.sha1((state.get("patient_info") or "").encode()).hexdigest()
+    return hashlib.sha1("|".join([option, patient, feedback_sig]).encode()).hexdigest()[:20]
 
 
-def argument_validator(state: GraphState) -> GraphState:
-    """Third LLM: Validate arguments with option to retrieve more evidence.
+def _normalize_relevance(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return "high" if value >= 0.7 else "moderate" if value >= 0.4 else "low"
+    text = str(value or "").strip().lower()
+    if text.startswith("high"):
+        return "high"
+    if text.startswith("low"):
+        return "low"
+    return "moderate"
 
-    Every active argument is (re-)verified against the patient and the
-    clinician's cumulative feedback. Results are cached on the argument and the
-    feedback in force, so a contest that only edits the argument table
-    re-verifies just the changed arguments, while new free-text feedback
-    re-verifies all of them."""
-    print("🫡 Validating arguments...")
-    ensure_argument_ids(state)
-    validated_arguments = []
-    vector_db = MedicalVectorDB()
-    cache = state.get("validation_cache") or {}
-    history = state.get("feedback_history") or []
-    feedback_sig = feedback_signature(history)
-    feedback_section = ""
-    if history:
-        feedback_section = (
-            "\n            Clinician feedback on earlier versions of this care plan (the clinician knows the "
-            f"patient; take it into account):\n{feedback_context(history)}\n"
-        )
-    memory_section = _guidance_block(_memory_guidance(
-        state, "argument_validation",
-        f"{state.get('patient_info', '')} {' '.join(state.get('handling_options') or [])}",
-    ))
-    patient_summary = clip_text(state.get("patient_info", ""), 800)
 
-    # Track which arguments needed additional evidence
-    arguments_with_additional_evidence = []
-    active = active_arguments(state["arguments"])
-    total_args = len(active)
-    reused = 0
+def _unit_score(value: Any, default: float = DEFAULT_UNVERIFIED_VALIDITY) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return default
 
-    for i, arg in enumerate(active):
-        key = _validation_key(arg, state, feedback_sig)
-        cached = cache.get(key)
-        if cached is not None:
-            arg.validity_score = cached["score"]
-            arg.validation_note = cached.get("note")
-            arg.supporting_docs = cached.get("docs", [])
-            arg.flags = list(cached.get("flags", []))
-            reused += 1
-            validated_arguments.append(arg)
-            if state.get("enable_streaming", False):
-                _report_progress(state, "validation_progress", f"Validating argument {i+1}/{total_args}")
-                _report_progress(state, "current_sub_step",
-                    f"♻️ Argument {i+1}/{total_args} ({arg.arg_id}): unchanged since its last verification — score {arg.validity_score:.2f} kept")
+
+def _strip_role_tag(content: str) -> str:
+    content = content or ""
+    if content.startswith("[") and "]" in content[:60]:
+        return content.split("]", 1)[1].strip()
+    return content
+
+
+def _option_evidence(state: GraphState, vector_db: Any, option: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Evidence for one option: an option-specific search plus the case's most relevant
+    documents, as reference entries (new documents become citable references)."""
+    references = state.get("document_references")
+    if references is None:
+        references = state["document_references"] = []
+    by_content = {ref["full_content"]: ref for ref in references}
+    query = f"elderly {option} {clip_text(state.get('patient_info', ''), 160)}"
+    try:
+        results = vector_db.search(query, n_results=3)
+    except Exception as exc:  # retrieval is optional evidence, never a reason to fail
+        print(f"Evidence search failed for option: {exc}")
+        results = []
+    found: List[Dict[str, Any]] = []
+    for doc in results:
+        ref = by_content.get(doc["document"])
+        if ref is None:
+            ref = {
+                "id": max((r["id"] for r in references), default=0) + 1,
+                "content": clip_text(doc["document"], 200),
+                "full_content": doc["document"],
+                "similarity_score": doc.get("similarity_score", 0.0),
+                "metadata": doc.get("metadata", {}),
+                "search_query": query,
+                "used_in": [],
+            }
+            references.append(ref)
+            by_content[doc["document"]] = ref
+            state.setdefault("retrieved_documents", []).append({**doc, "doc_id": ref["id"], "search_query": query})
+        if ref not in found:
+            found.append(ref)
+    for ref in sorted(references, key=lambda r: -(r.get("similarity_score") or 0.0)):
+        if len(found) >= limit:
+            break
+        if ref not in found:
+            found.append(ref)
+    return found[:limit]
+
+
+def _group_prompt(state: GraphState, oid: str, option: str, group: List[Argument], evidence: List[Dict[str, Any]],
+                  context: str, patient_summary: str) -> str:
+    def author(arg: Argument) -> str:
+        if is_human_authored(arg):
+            return "clinician"
+        if arg.source == "memory":
+            return "learned guidance"
+        return arg.agent_role or "care team"
+
+    rows = []
+    for arg in group:
+        stance = "support" if arg.argument_type == "support" else "challenge"
+        target = f" (responds to {arg.target_arg_id})" if arg.target_arg_id else ""
+        rows.append(f"{arg.arg_id} | {stance} | {author(arg)}{target} | {_strip_role_tag(arg.content)}")
+    evidence_lines = "\n".join(
+        f"[{ref['id']}] {clip_text(ref['full_content'], 500)}" for ref in evidence
+    ) or "(no documents were retrieved)"
+    rows_text = "\n".join(rows)
+    return f"""You are the {GROUP_VERIFICATION_ROLE}.
+Verify all the arguments about ONE care option together, as a group: compare them with each other,
+with the patient's situation and with the evidence, so that strong, patient-specific points count
+for more than generic ones.
+
+Patient: {patient_summary}
+{context}
+Care option {oid}: {option}
+
+Evidence excerpts:
+{evidence_lines}
+
+Arguments (id | stance | author | text):
+{rows_text}
+
+For EVERY argument give:
+- validity: 0.0 to 1.0, how accurate and well grounded the claim is for this patient (clinical knowledge and the evidence above).
+- relevance: "high" if it bears on this patient's main risks or stated goals, "moderate" if it matters but is secondary, "low" if it is generic or speculative for this patient.
+- same_as: the id of an EARLIER argument in the list that makes essentially the same point, otherwise null.
+- refs: numbers of the evidence excerpts it relies on, e.g. [1, 3], or [].
+- note: one sentence explaining your judgement.
+Then list rebuttals: when an argument directly answers an argument of the opposite stance (for example a
+support showing that a concern is manageable for this patient), give {{"from": "<id>", "to": "<id>", "reason": "<one sentence>"}}.
+Finally write a summary: two or three sentences on how strong this option is for this patient and why.
+
+Return JSON only, in this shape:
+{{"arguments": [{{"id": "A1", "validity": 0.8, "relevance": "high", "same_as": null, "refs": [1], "note": "..."}}],
+ "rebuttals": [{{"from": "A1", "to": "A2", "reason": "..."}}],
+ "summary": "..."}}"""
+
+
+def _apply_group_result(group: List[Argument], result: Optional[Dict[str, Any]],
+                        evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Write a group verification onto its arguments and return the option's review."""
+    result = result if isinstance(result, dict) else {}
+    by_id = {
+        str(item.get("id")).strip(): item
+        for item in result.get("arguments") or []
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    order = {arg.arg_id: index for index, arg in enumerate(group)}
+    ref_ids = {ref["id"] for ref in evidence}
+    missing = []
+    for arg in group:
+        item = by_id.get(arg.arg_id)
+        arg.rebuts = []
+        if item is None:
+            missing.append(arg.arg_id)
+            arg.validity_score, arg.relevance, arg.same_as = DEFAULT_UNVERIFIED_VALIDITY, "moderate", None
+            arg.supporting_docs = []
+            arg.validation_note = "Not verified: the verification panel returned no result for this argument."
+            arg.flags = ["unverified"]
             continue
-
-        if state.get("enable_streaming", False):
-            _report_progress(state, "validation_progress", f"Validating argument {i+1}/{total_args}")
-            _report_progress(state, "current_sub_step",
-                f"✅ Argument {i+1}/{total_args} ({arg.arg_id}): evaluating factual accuracy & clinical relevance...")
-
-        target = find_argument(state["arguments"], arg.target_arg_id)
-        target_section = ""
-        if target is not None:
-            target_section = f"\n            This argument responds to another argument ({target.argument_type}): {target.content}\n"
-
-        # First validation pass
-        initial_prompt = f"""
-            You are an expert analyst evaluating the validity and relevance of arguments 
-            for elderly care planning.
-            
-            Patient Information (summary): {patient_summary}
-            {feedback_section}{memory_section}
-            Handling Option: {arg.parent_option}
-            {target_section}
-            Argument ({arg.argument_type}): {arg.content}
-            
-            Please evaluate this argument based on:
-            1. Factual accuracy
-            2. Relevance to elderly care and aging-in-place, and to this patient
-            3. Practical considerations
-            4. Evidence-based reasoning
-            
-            Provide a validity score between 0 and 1, where:
-            - 0 = completely invalid/irrelevant
-            - 0.5 = moderately valid
-            - 1 = highly valid and relevant
-            
-            Response format: "Validity Score: X.XX"
-            Include a brief explanation."""
-
-        max_toks = get_max_tokens_for_severity(256, state["severity"])
-        if state.get("enable_streaming", False):
-            initial_response = ""
-            for initial_response in stream_text(
-                initial_prompt, temperature=0.3, max_tokens=max_toks
-            ):
-                state["current_validation_stream"] = initial_response
-                _report_progress(state, "current_stream_text", initial_response)
-        else:
-            initial_response = call_llm(initial_prompt, temperature=0.3, max_tokens=max_toks)
-
-        # Extract initial validity score
-        initial_validity_score = 0.5  # default
-        try:
-            if "Validity Score:" in initial_response:
-                score_text = initial_response.split("Validity Score:")[1].split()[0]
-                initial_validity_score = float(score_text.strip().strip("*"))
-                initial_validity_score = max(0, min(1, initial_validity_score))
-        except:
-            pass
-        arg.validation_note = _explanation(initial_response, "Validity Score")
-
-        # Check if we need additional evidence for weak arguments
-        if initial_validity_score < 0.5:
-            print(
-                f"Low validity score ({initial_validity_score:.2f}) for argument. Retrieving additional evidence..."
-            )
-
-            # Generate intelligent search query for this specific argument
-            search_query_prompt = f"""
-                Generate a specific medical search query to find evidence about this elderly care argument:
-                Option: {arg.parent_option}
-                Argument Type: {arg.argument_type}
-                Argument: {arg.content}       
-                Create ONE focused search query that would help validate or refute this argument:"""
-
-            sq_toks = get_max_tokens_for_severity(128, state["severity"])
-            search_query = call_llm(
-                search_query_prompt, temperature=0.2, max_tokens=sq_toks
-            ).strip()
-
-            # Retrieve additional evidence
-            additional_docs = vector_db.search(search_query, n_results=3)
-
-            if additional_docs:
-                # Track which documents were used for this argument
-                doc_refs_used = []
-
-                # Format additional evidence
-                additional_context = "\nADDITIONAL MEDICAL EVIDENCE:\n"
-                for doc_index, doc in enumerate(additional_docs, 1):
-                    additional_context += (
-                        f"\n[Evidence {doc_index}] (Relevance: {doc['similarity_score']:.2f})\n"
-                    )
-                    additional_context += f"{doc['document'][:500]}...\n"
-
-                    # Track this document usage
-                    if "document_references" in state:
-                        # Find matching reference
-                        for ref in state["document_references"]:
-                            if ref["full_content"] == doc["document"]:
-                                ref["used_in"].append(
-                                    f"validation_{arg.content[:30]}..."
-                                )
-                                doc_refs_used.append(ref["id"])
-                                break
-
-                # Store which docs supported this argument
-                arg.supporting_docs = doc_refs_used
-
-                # Re-validate with additional context
-                revalidation_prompt = f"""You are an expert analyst. Re-evaluate this elderly care argument 
-                with additional medical evidence.
-                
-                Handling Option: {arg.parent_option}
-                
-                Argument ({arg.argument_type}): {arg.content}
-                
-                Initial Assessment: The argument initially scored {initial_validity_score:.2f} in validity.
-                
-                {additional_context}
-                
-                Based on the additional evidence above, re-evaluate this argument considering:
-                1. Whether the evidence supports or contradicts the argument
-                2. The reliability and relevance of the evidence
-                3. How this changes the practical validity of the argument
-                
-                Provide an updated validity score between 0 and 1.
-                
-                Response format: "Updated Validity Score: X.XX"
-                Explain how the evidence influenced your assessment."""
-
-                rv_toks = get_max_tokens_for_severity(512, state["severity"])
-                if state.get("enable_streaming", False):
-                    revalidation_response = ""
-                    for revalidation_response in stream_text(
-                        revalidation_prompt, temperature=0.3, max_tokens=rv_toks
-                    ):
-                        _report_progress(state, "current_stream_text", revalidation_response)
-                else:
-                    revalidation_response = call_llm(revalidation_prompt, temperature=0.3, max_tokens=rv_toks)
-
-                # Extract updated validity score
-                updated_validity_score = initial_validity_score  # fallback to initial
-                try:
-                    if "Updated Validity Score:" in revalidation_response:
-                        score_text = revalidation_response.split(
-                            "Updated Validity Score:"
-                        )[1].split()[0]
-                        updated_validity_score = float(score_text.strip().strip("*"))
-                        updated_validity_score = max(0, min(1, updated_validity_score))
-                    elif "Validity Score:" in revalidation_response:
-                        score_text = revalidation_response.split("Validity Score:")[
-                            1
-                        ].split()[0]
-                        updated_validity_score = float(score_text.strip().strip("*"))
-                        updated_validity_score = max(0, min(1, updated_validity_score))
-                except:
-                    pass
-
-                # Track that this argument had additional evidence retrieved
-                arguments_with_additional_evidence.append(
-                    {
-                        "argument": arg.content,
-                        "initial_score": initial_validity_score,
-                        "updated_score": updated_validity_score,
-                        "evidence_used": len(additional_docs),
-                    }
-                )
-
-                arg.validity_score = updated_validity_score
-                arg.validation_note = _explanation(revalidation_response, "Updated Validity Score") or arg.validation_note
-                print(
-                    f"  Score updated: {initial_validity_score:.2f} → {updated_validity_score:.2f}"
-                )
-
-            else:
-                # No additional evidence found, keep initial score
-                arg.validity_score = initial_validity_score
-                print(
-                    f"  No additional evidence found. Keeping score: {initial_validity_score:.2f}"
-                )
-
-        elif initial_validity_score >= 0.8:
-            # High validity arguments - optionally verify with evidence
-            print(
-                f"High validity score ({initial_validity_score:.2f}). Checking for supporting evidence..."
-            )
-
-            # Quick verification search
-            verification_query = f"{arg.parent_option} elderly care evidence"
-            verification_docs = vector_db.search(verification_query, n_results=2)
-
-            if verification_docs and verification_docs[0]["similarity_score"] > 0.7:
-                # Found strong supporting evidence
-                verification_context = f"\nSUPPORTING EVIDENCE (Relevance: {verification_docs[0]['similarity_score']:.2f}):\n"
-                verification_context += f"{verification_docs[0]['document'][:300]}...\n"
-
-                # Quick verification
-                verification_prompt = f"""Quickly verify this highly-rated argument with supporting evidence:
-                
-                Argument: {arg.content}
-                Current Score: {initial_validity_score:.2f}
-                
-                {verification_context}
-                
-                Does this evidence support the high validity score? 
-                Response: "Confirmed Score: X.XX" (can be same or adjusted)"""
-
-                vf_toks = get_max_tokens_for_severity(1280, state["severity"])
-                if state.get("enable_streaming", False):
-                    verification_response = ""
-                    for verification_response in stream_text(
-                        verification_prompt, temperature=0.2, max_tokens=vf_toks
-                    ):
-                        _report_progress(state, "current_stream_text", verification_response)
-                else:
-                    verification_response = call_llm(verification_prompt, temperature=0.2, max_tokens=vf_toks)
-
-                # Extract confirmed score
-                confirmed_score = initial_validity_score
-                try:
-                    if "Confirmed Score:" in verification_response:
-                        score_text = verification_response.split("Confirmed Score:")[
-                            1
-                        ].split()[0]
-                        confirmed_score = float(score_text.strip().strip("*"))
-                        confirmed_score = max(0, min(1, confirmed_score))
-                except:
-                    pass
-
-                arg.validity_score = confirmed_score
-                if confirmed_score != initial_validity_score:
-                    print(
-                        f"  Score adjusted: {initial_validity_score:.2f} → {confirmed_score:.2f}"
-                    )
-            else:
-                arg.validity_score = initial_validity_score
-
-        else:
-            # Moderate validity scores (0.5 - 0.8) - keep as is
-            arg.validity_score = initial_validity_score
-            print(
-                f"Moderate validity score ({initial_validity_score:.2f}). No additional retrieval needed."
-            )
-
+        arg.validity_score = _unit_score(item.get("validity"))
+        arg.relevance = _normalize_relevance(item.get("relevance"))
+        same = str(item.get("same_as") or "").strip()
+        arg.same_as = same if same in order and order[same] < order[arg.arg_id] else None
+        arg.supporting_docs = [
+            int(ref) for ref in item.get("refs") or [] if str(ref).strip().isdigit() and int(ref) in ref_ids
+        ]
+        arg.validation_note = clip_text(str(item.get("note") or "").strip(), 400) or None
         # The clinician stays the decision-maker, but a weak verification of their
         # argument is surfaced rather than hidden.
         arg.flags = ["verifier_disagrees"] if is_human_authored(arg) and arg.validity_score < 0.4 else []
-        cache[key] = {"score": arg.validity_score, "note": arg.validation_note,
-                      "docs": list(arg.supporting_docs), "flags": list(arg.flags)}
-        validated_arguments.append(arg)
+    by_arg = {arg.arg_id: arg for arg in group}
+    rebuttals = []
+    for item in result.get("rebuttals") or []:
+        if not isinstance(item, dict):
+            continue
+        source = by_arg.get(str(item.get("from") or "").strip())
+        target = by_arg.get(str(item.get("to") or "").strip())
+        if (source is None or target is None or source is target
+                or source.argument_type == target.argument_type or target.arg_id in source.rebuts):
+            continue
+        source.rebuts.append(target.arg_id)
+        rebuttals.append({"from": source.arg_id, "to": target.arg_id,
+                          "reason": clip_text(str(item.get("reason") or "").strip(), 300)})
+    return {
+        "summary": str(result.get("summary") or "").strip(),
+        "rebuttals": rebuttals,
+        "verified": bool(by_id),
+        "unverified": missing,
+    }
+
+
+def _cache_group(group: List[Argument], state: GraphState, basis: str, review: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "basis": basis,
+        "review": review,
+        "args": {
+            arg.arg_id: {
+                "sig": _argument_signature(arg, state),
+                "validity": arg.validity_score,
+                "relevance": arg.relevance,
+                "same_as": arg.same_as,
+                "rebuts": list(arg.rebuts),
+                "docs": list(arg.supporting_docs),
+                "note": arg.validation_note,
+                "flags": list(arg.flags),
+            }
+            for arg in group
+        },
+    }
+
+
+def _reusable(cached: Optional[Dict[str, Any]], group: List[Argument], state: GraphState, basis: str) -> bool:
+    """A group needs no new verification when nothing it depends on changed and every
+    argument was verified as written; arguments may have been removed since."""
+    if not cached or cached.get("basis") != basis:
+        return False
+    return all(
+        arg.arg_id in cached["args"] and cached["args"][arg.arg_id]["sig"] == _argument_signature(arg, state)
+        for arg in group
+    )
+
+
+def _reuse_group(cached: Dict[str, Any], group: List[Argument]) -> Dict[str, Any]:
+    present = {arg.arg_id for arg in group}
+    for arg in group:
+        entry = cached["args"][arg.arg_id]
+        arg.validity_score = entry["validity"]
+        arg.relevance = entry["relevance"]
+        # A repeat of a removed argument now carries the point itself.
+        arg.same_as = entry["same_as"] if entry["same_as"] in present else None
+        arg.rebuts = [target for target in entry["rebuts"] if target in present]
+        arg.supporting_docs = list(entry["docs"])
+        arg.validation_note = entry["note"]
+        arg.flags = list(entry["flags"])
+    review = dict(cached["review"])
+    review["rebuttals"] = [
+        item for item in review.get("rebuttals", []) if item["from"] in present and item["to"] in present
+    ]
+    return review
+
+
+def _group_report(group: List[Argument], review: Dict[str, Any]) -> str:
+    lines = []
+    for arg in group:
+        stance = "support" if arg.argument_type == "support" else "challenge"
+        repeat = f", repeats {arg.same_as}" if arg.same_as else ""
+        lines.append(f"{arg.arg_id} {stance}: validity {arg.validity_score:.2f}, {arg.relevance} relevance{repeat}")
+    for item in review.get("rebuttals", []):
+        lines.append(f"{item['from']} answers {item['to']}: {item['reason']}")
+    if review.get("summary"):
+        lines.append(f"Panel: {review['summary']}")
+    return "\n".join(lines)
+
+
+def argument_validator(state: GraphState) -> GraphState:
+    """Verify the arguments for each care option together, as a group.
+
+    One call per option judges every argument's validity and its relevance to
+    this patient, spots repeated points and finds the arguments that answer an
+    opposing one, then summarises the option. Judging the arguments side by side
+    is quicker than one call per argument and lets strong, patient-specific
+    points outweigh generic ones in the QBAF.
+
+    Results are cached per option on the patient, the clinician feedback in force
+    and each argument as written: a contest that only removes or restores
+    arguments re-verifies nothing, an edit or a new argument re-verifies its
+    option's group, and new free-text feedback re-verifies every group."""
+    print("🫡 Verifying arguments by option group...")
+    ensure_argument_ids(state)
+    options = state.get("handling_options") or []
+    cache = state.get("validation_cache") or {}
+    groups_cache = cache.setdefault("groups", {})
+    history = state.get("feedback_history") or []
+    feedback_sig = feedback_signature(history)
+    context = ""
+    if history:
+        context += (
+            "Clinician feedback on earlier versions of this care plan (the clinician knows the patient; "
+            f"take it into account):\n{feedback_context(history)}\n"
+        )
+    context += _guidance_block(_memory_guidance(
+        state, "argument_validation", f"{state.get('patient_info', '')} {' '.join(options)}",
+    ))
+    patient_summary = clip_text(state.get("patient_info", ""), 800)
+    vector_db = MedicalVectorDB()
+    active = active_arguments(state["arguments"])
+    reviews: Dict[str, Dict[str, Any]] = {}
+    verified_groups = reused_groups = 0
+    streaming = state.get("enable_streaming", False)
+
+    for index, option in enumerate(options):
+        oid = option_id(index)
+        group = [arg for arg in active if option_index(options, arg.parent_option) == index]
+        if not group:
+            reviews[oid] = {"summary": "", "rebuttals": [], "verified": False, "unverified": []}
+            continue
+        basis = _group_basis(option, state, feedback_sig)
+        cached = groups_cache.get(option)
+        label = f"Option {index + 1}/{len(options)}"
+        if _reusable(cached, group, state, basis):
+            reviews[oid] = _reuse_group(cached, group)
+            reused_groups += 1
+            if streaming:
+                _report_progress(state, "validation_progress", f"{label}: verification reused")
+                _report_progress(state, "current_sub_step",
+                                 f"♻️ {label}: {len(group)} arguments unchanged since their last verification")
+            continue
+
+        if streaming:
+            _report_progress(state, "validation_progress", f"{label}: verifying {len(group)} arguments together")
+            _report_progress(state, "current_sub_step",
+                             f"🧪 {label}: verifying {len(group)} arguments together against the evidence...")
+        evidence = _option_evidence(state, vector_db, option)
+        prompt = _group_prompt(state, oid, option, group, evidence, context, patient_summary)
+        result = call_llm_json(prompt, temperature=0.2, max_tokens=max(1200, 180 * len(group) + 500))
+        review = _apply_group_result(group, result, evidence)
+        reviews[oid] = review
+        groups_cache[option] = _cache_group(group, state, basis, review)
+        verified_groups += 1
+        if streaming:
+            _report_progress(state, "current_stream_text", _group_report(group, review))
+        print(f"{label}: {len(group)} arguments verified together; "
+              f"{len(review['rebuttals'])} rebuttals; {len(review['unverified'])} without a result")
 
     state["validation_cache"] = cache
-    print(f"Verification reused for {reused}/{total_args} unchanged arguments")
-
-    # Add summary of adaptive retrieval to state
-    if arguments_with_additional_evidence:
-        adaptive_retrieval_summary = {
-            "arguments_enhanced": len(arguments_with_additional_evidence),
-            "average_score_improvement": sum(
-                a["updated_score"] - a["initial_score"]
-                for a in arguments_with_additional_evidence
-            )
-            / len(arguments_with_additional_evidence),
-            "details": arguments_with_additional_evidence,
-        }
-
-        # Store in state for transparency
-        state["adaptive_retrieval_summary"] = adaptive_retrieval_summary
-
-        print(f"\nAdaptive Retrieval Summary:")
-        print(
-            f"  Arguments enhanced: {adaptive_retrieval_summary['arguments_enhanced']}"
-        )
-        print(
-            f"  Avg score improvement: {adaptive_retrieval_summary['average_score_improvement']:.3f}"
-        )
-
-    state["validated_arguments"] = validated_arguments
+    state["option_reviews"] = reviews
+    state["validated_arguments"] = active
+    state["adaptive_retrieval_summary"] = {"groups_verified": verified_groups, "groups_reused": reused_groups}
     state["current_step"] = "qbaf_evaluation"
-
-    # Log final statistics
-    avg_validity = (
-        sum(arg.validity_score for arg in validated_arguments)
-        / len(validated_arguments)
-        if validated_arguments
-        else 0
-    )
-    print(f"\nValidation complete. Average validity: {avg_validity:.2f}")
-    print(
-        f"  High validity (>0.8): {sum(1 for arg in validated_arguments if arg.validity_score > 0.8)}"
-    )
-    print(
-        f"  Moderate (0.5-0.8): {sum(1 for arg in validated_arguments if 0.5 <= arg.validity_score <= 0.8)}"
-    )
-    print(
-        f"  Low validity (<0.5): {sum(1 for arg in validated_arguments if arg.validity_score < 0.5)}"
-    )
-
+    if active:
+        average = sum(arg.validity_score or 0.0 for arg in active) / len(active)
+        relevance = {level: sum(1 for arg in active if arg.relevance == level) for level in ("high", "moderate", "low")}
+        print(f"Verification: {verified_groups} option groups verified, {reused_groups} reused; "
+              f"average validity {average:.2f}; relevance {relevance}")
     return state
 
 
@@ -923,6 +873,9 @@ def qbaf_evaluation(state: GraphState) -> GraphState:
     if state.get("enable_streaming", False):
         _report_progress(state, "current_sub_step", "⚖️ Weighing the verified arguments in the argumentation framework...")
     state["qbaf"] = evaluate_qbaf(state["handling_options"], state["arguments"])
+    reviews = state.get("option_reviews") or {}
+    for row in state["qbaf"]["options"]:
+        row["review"] = (reviews.get(row["option_id"]) or {}).get("summary") or None
     summary = "; ".join(
         f"{row['option_id']} {row['strength']:.2f} ({row['tier_label']})" for row in state["qbaf"]["options"]
     )

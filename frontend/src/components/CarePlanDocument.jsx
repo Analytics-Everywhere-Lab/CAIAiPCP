@@ -442,7 +442,7 @@ export default function CarePlanDocument({
                 <dd className="plan-meta-confidence">
                   <span className="meter"><span style={{ width: `${Math.round(100 * (plan.decision_confidence || 0))}%` }} /></span>
                   <strong>{Math.round(100 * (plan.decision_confidence || 0))}%</strong>
-                  <span className="plan-meta-hint">how clearly the weighed arguments separate the options</span>
+                  <span className="plan-meta-hint">how decisively the verified arguments settle each option, scaled by how well they are grounded in evidence</span>
                 </dd>
               </dl>
 

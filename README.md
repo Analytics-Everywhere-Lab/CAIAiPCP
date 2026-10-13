@@ -71,11 +71,15 @@ python main.py
 
 ## Contestation Workflow
 
-1. **Review the argument graph.** The care team's supporting and challenging arguments appear in the
-   *Arguments* tab (never in the chat). Edit, remove (kept for audit and restorable) or add
+1. **Review the argument graph.** Each discipline on the care team gives a balanced assessment of every
+   option: one or two supporting arguments and one or two concerns, raised only when they genuinely apply. They
+   appear in the *Arguments* tab (never in the chat) as full-width rows, supporting arguments first, then
+   concerns. Edit or remove an argument right where it is (with an optional reason, which the memory learns
+   from), add your own from the row at the end of each section, or filter by role. Edit, remove (kept for audit and restorable) or add
    arguments, then accept to generate the plan.
-2. **Read the care plan.** Arguments are verified, then weighed in a quantitative bipolar argumentation
-   framework (QBAF, quadratic energy semantics). Each care option gets a strength and an assessment
+2. **Read the care plan.** Arguments are verified per option, as a group, then weighed in a quantitative bipolar
+   argumentation framework (QBAF, quadratic energy semantics); see [How options are weighed](#how-options-are-weighed).
+   Each care option gets a strength and an assessment
    (*Recommended*, *Recommended with conditions*, *Clinical judgment required*, *Not recommended at this time*,
    *Not recommended*). The plan is a professional document with fixed sections, a decision summary, references,
    and version history. Use **Download PDF** for a typeset copy, or **Print**.
@@ -101,6 +105,31 @@ rows, a budgeted plan digest, a rolling conversation summary and a bounded event
 however long the conversation gets. Only what it *reads* is compacted: its answers are written in full, in plain
 clinical prose with Markdown. With the Claude API, the case context is also served from the prompt cache on
 follow-up questions.
+
+### How options are weighed
+
+Verifying arguments one at a time and counting each by its validity alone made every option collect a similar
+number of pros and cons of similar validity. They cancelled out, every option landed near 0.5, and decision
+confidence stayed in single digits even for clear cases. The framework now works like this:
+
+1. **Group verification.** All the arguments for one option are judged together, in one call per option, against
+   the patient, the clinician's feedback and evidence retrieved for that option. For every argument the panel gives
+   its *validity* (is it accurate and well grounded for this patient?) and its *relevance* (does it bear on the
+   patient's main risks and stated goals, or is it secondary, or generic?). It also marks *repeated points* and
+   *rebuttals*, where one argument answers an opposing one (for example, a support showing that a cost concern is
+   minor), and writes a short verdict on the option, shown on the argument page.
+2. **Weighting.** An argument's base score is validity × relevance weight (high 1.0, moderate 0.65, low 0.3). A
+   repeated point adds corroboration at 0.35 of its weight instead of a second full vote. Clinician-authored
+   arguments blend validity with clinician authority and count at least as moderately relevant.
+3. **Propagation.** Supports and concerns push the option away from a neutral 0.5 under quadratic energy
+   semantics, and each rebuttal also attacks the argument it answers, so answered concerns weigh less.
+4. **Decision confidence.** For each option: grounding × (0.5 + 0.5 × decisiveness), where decisiveness is how far
+   the option's strength is from 0.5 and grounding is the relevance-weighted mean validity of its arguments. A
+   clear verdict from weak arguments is not confident, and an even split between sound arguments is moderately
+   confident. The plan reports the mean over options.
+
+Verification is cached per option: removing or restoring arguments re-verifies nothing, editing or adding an
+argument re-verifies that option's group in one call, and new free-text feedback re-verifies every option.
 
 ```text
 new case:   rag_retrieval -> care_plan_generation -> argument_generation -> human_review (pause)

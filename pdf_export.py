@@ -263,7 +263,7 @@ def _patient_box(plan: Dict[str, Any], styles, width: float) -> Table:
         ("Severity", plan.get("severity") or "Not assessed"),
         ("Care team", team or "Not assigned"),
         ("Decision confidence", f"{round(100 * (plan.get('decision_confidence') or 0))}% "
-                                "(how decisively the weighed arguments separate the options)"),
+                                "(how decisively the verified arguments settle each option, scaled by how well they are grounded)"),
     ]
     data = [[Paragraph(label.upper(), styles["label"]), Paragraph(_inline(value), styles["value"])]
             for label, value in rows]

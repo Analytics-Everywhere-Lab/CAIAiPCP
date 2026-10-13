@@ -1,68 +1,145 @@
 import { useEffect, useState } from 'react'
 import { TIER_CLASS } from './CarePlanDocument'
-import { ChevronDown, Edit, Plus, Refresh, Trash, X, CheckCircle } from './Icons'
+import { Check, CheckCircle, ChevronDown, Edit, Plus, Refresh, Trash } from './Icons'
 
 const SOURCE_BADGES = {
   human: { label: 'Added by clinician', className: 'badge-human' },
   feedback: { label: 'From plan feedback', className: 'badge-feedback' },
   memory: { label: 'Learned from past reviews', className: 'badge-memory' }
 }
+const RELEVANCE_LABELS = { high: 'High relevance', moderate: 'Moderate relevance', low: 'Low relevance' }
+const ROLE_TAG = /^\[[^\]]{1,60}\]\s*/
 
-function stripRoleTag(content) {
-  return content?.startsWith('[') && content.indexOf(']') > 0 ? content.slice(content.indexOf(']') + 1).trim() : content
+function formatImpact(value) {
+  const rounded = Math.round(value * 100) / 100
+  if (rounded === 0) return '0.00'
+  return `${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}`
 }
 
-function ArgumentCard({ arg, qbafRow, editable, selected, onSelect, planExists }) {
+function impactClass(value) {
+  const rounded = Math.round(value * 100) / 100
+  return rounded > 0 ? 'impact-up' : rounded < 0 ? 'impact-down' : ''
+}
+
+function stripRoleTag(content) {
+  return (content || '').replace(ROLE_TAG, '')
+}
+
+// Shared editor for editing an argument in place and for adding a new one.
+function InlineEditor({ value, onChange, onSave, onCancel, saveLabel, placeholder, disabled }) {
+  return (
+    <div className="inline-editor">
+      <textarea className="input" autoFocus rows={3} value={value} placeholder={placeholder}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!disabled) onSave() }
+          if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+        }} />
+      <div className="inline-actions">
+        <span className="inline-hint">Ctrl+Enter to save · Esc to cancel</span>
+        <button type="button" className="btn ghost sm" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn primary sm" disabled={disabled} onClick={onSave}><Check size={14} /> {saveLabel}</button>
+      </div>
+    </div>
+  )
+}
+
+function ArgumentRow({
+  arg, qbafRow, editable, planExists, editing, removing, answeredBy, rebuttalReason,
+  onEdit, onEditChange, onSaveEdit, onCancel, onRemove, onRemoveChange, onConfirmRemove
+}) {
   const source = SOURCE_BADGES[arg.source]
+  const stance = arg.type === 'support' ? 'support' : 'attack'
   const pendingReevaluation = planExists && !qbafRow
   return (
-    <button type="button" className={`arg-card ${arg.type} ${selected ? 'is-selected' : ''}`} disabled={!editable}
-      onClick={() => onSelect(arg)} title={arg.validation_note ? `Verifier: ${arg.validation_note}` : 'Edit or remove this argument'}>
-      <div className="arg-card-top">
-        <span className={`stance-pill ${arg.type}`}>{arg.type === 'support' ? 'Supports' : 'Challenges'}</span>
-        <span className="arg-id">{arg.arg_id}</span>
+    <article className={`arg-row ${stance} ${editing ? 'is-editing' : ''} ${removing ? 'is-removing' : ''}`} id={`arg-${arg.arg_id}`}>
+      <div className="arg-row-meta">
+        <div className="arg-row-tags">
+          <span className={`stance-pill ${stance}`}>{stance === 'support' ? 'Supports' : 'Concern'}</span>
+          <span className="arg-id">{arg.arg_id}</span>
+        </div>
+        <span className="arg-role">{arg.role}</span>
         {source && <span className={`badge ${source.className}`}>{source.label}{arg.feedback_id ? ` · ${arg.feedback_id}` : ''}</span>}
         {arg.status === 'edited' && <span className="badge badge-edited">Edited</span>}
-        {editable && <Edit size={13} className="arg-edit-hint" />}
       </div>
-      {arg.target_arg_id && <div className="arg-target">Responds to {arg.target_arg_id}</div>}
-      <div className="arg-text">{stripRoleTag(arg.content)}</div>
-      {arg.status === 'edited' && arg.original_content && (
-        <div className="arg-original">Was: {stripRoleTag(arg.original_content)}</div>
-      )}
-      {(arg.score != null || qbafRow) && (
+
+      <div className="arg-row-body">
+        {editing ? (
+          <InlineEditor value={editing.text} onChange={onEditChange} onSave={onSaveEdit} onCancel={onCancel}
+            saveLabel="Save" disabled={!editing.text.trim() || editing.text.trim() === stripRoleTag(arg.content).trim()} />
+        ) : (
+          <p className="arg-text">{stripRoleTag(arg.content)}</p>
+        )}
+        {removing && (
+          <div className="remove-confirm">
+            <input className="input" autoFocus placeholder="Why remove it? (optional, helps the system learn)" value={removing.reason}
+              onChange={e => onRemoveChange(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); onConfirmRemove() }
+                if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+              }} />
+            <button type="button" className="btn ghost sm" onClick={onCancel}>Keep</button>
+            <button type="button" className="btn danger-soft sm" onClick={onConfirmRemove}><Trash size={14} /> Remove</button>
+          </div>
+        )}
+        {arg.status === 'edited' && arg.original_content && !editing && (
+          <p className="arg-original">Was: {stripRoleTag(arg.original_content)}</p>
+        )}
+        {(arg.target_arg_id || arg.rebuts?.length > 0 || answeredBy?.length > 0 || arg.same_as) && (
+          <div className="arg-links">
+            {arg.target_arg_id && <a className="arg-link" href={`#arg-${arg.target_arg_id}`}>Responds to {arg.target_arg_id}</a>}
+            {arg.rebuts?.map(target => (
+              <a key={target} className="arg-link answers" href={`#arg-${target}`} title={rebuttalReason(arg.arg_id, target) || ''}>
+                Answers {target}{rebuttalReason(arg.arg_id, target) ? `: ${rebuttalReason(arg.arg_id, target)}` : ''}
+              </a>
+            ))}
+            {answeredBy?.map(source => (
+              <a key={source} className="arg-link answered" href={`#arg-${source}`} title={rebuttalReason(source, arg.arg_id) || ''}>
+                Answered by {source}, so it weighs less
+              </a>
+            ))}
+            {arg.same_as && <a className="arg-link repeat" href={`#arg-${arg.same_as}`}>Repeats {arg.same_as}, counted once</a>}
+          </div>
+        )}
+        {arg.validation_note && !editing && <p className="arg-note"><strong>Verifier:</strong> {arg.validation_note}</p>}
+        {arg.flags?.includes('verifier_disagrees') && (
+          <p className="arg-warning">The verifier found weak support; it still counts with clinician weight.</p>
+        )}
+        {arg.flags?.includes('unverified') && <p className="arg-warning">Not verified: the panel returned no result for this argument.</p>}
+      </div>
+
+      <div className="arg-row-side">
         <div className="arg-metrics">
-          {arg.score != null && <span>Validity <strong>{arg.score.toFixed(2)}</strong></span>}
-          {qbafRow && <span>Strength <strong>{qbafRow.strength.toFixed(2)}</strong></span>}
+          {arg.relevance && <span className={`relevance-pill ${arg.relevance}`}>{RELEVANCE_LABELS[arg.relevance]}</span>}
+          {arg.score != null && <span className="metric">Validity <strong>{arg.score.toFixed(2)}</strong></span>}
           {qbafRow && (
-            <span className={qbafRow.contribution >= 0 ? 'impact-up' : 'impact-down'}>
-              Impact {qbafRow.contribution >= 0 ? '+' : ''}{qbafRow.contribution.toFixed(2)}
+            <span className="metric" title="Change in the option's strength if this argument were removed">
+              Impact <strong className={impactClass(qbafRow.contribution)}>{formatImpact(qbafRow.contribution)}</strong>
             </span>
           )}
+          {pendingReevaluation && <span className="metric pending">Weighed when you regenerate</span>}
         </div>
-      )}
-      {pendingReevaluation && <div className="arg-pending">Re-evaluated when you regenerate</div>}
-      {arg.flags?.includes('verifier_disagrees') && (
-        <div className="arg-warning">The verifier found weak support; it still counts with clinician weight.</div>
-      )}
-    </button>
+        {editable && !editing && !removing && (
+          <div className="arg-actions">
+            <button type="button" className="btn ghost xs" onClick={onEdit}><Edit size={13} /> Edit</button>
+            <button type="button" className="btn ghost xs danger-text" onClick={onRemove}><Trash size={13} /> Remove</button>
+          </div>
+        )}
+      </div>
+    </article>
   )
 }
 
 export default function ArgumentBoard({
-  options, args, qbafOptions, qbafArgs, phase, loading, pendingChanges, pendingFeedbackCount,
+  options, args, qbafOptions, qbafArgs, reviews, phase, loading, pendingChanges, pendingFeedbackCount,
   onAction, onAccept, onRegenerate
 }) {
   const [activeOption, setActiveOption] = useState(null)
-  const [selectedArg, setSelectedArg] = useState(null)
-  const [editContent, setEditContent] = useState('')
-  const [removeReason, setRemoveReason] = useState('')
-  const [showAdd, setShowAdd] = useState(false)
-  const [newArgContent, setNewArgContent] = useState('')
-  const [newArgType, setNewArgType] = useState('support')
-  const [newArgRole, setNewArgRole] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [editing, setEditing] = useState(null) // { argId, text }
+  const [removing, setRemoving] = useState(null) // { argId, reason }
+  const [composer, setComposer] = useState(null) // { stance, role, text }
   const [showRemoved, setShowRemoved] = useState(false)
-  const [collapsedRoles, setCollapsedRoles] = useState(() => new Set())
 
   const editable = !loading && (phase === 'review' || phase === 'plan')
   const planExists = phase === 'plan'
@@ -71,61 +148,114 @@ export default function ArgumentBoard({
     if (options.length > 0) setActiveOption(prev => (prev && options.includes(prev) ? prev : options[0]))
   }, [options])
 
+  const cancelAll = () => {
+    setEditing(null)
+    setRemoving(null)
+    setComposer(null)
+  }
+  useEffect(cancelAll, [activeOption])
+
   const roles = Array.from(new Set(args.filter(a => a.source === 'agent' || a.source === 'human').map(a => a.role)))
   if (roles.length === 0) roles.push('Clinician')
-  useEffect(() => {
-    if (!newArgRole && roles.length) setNewArgRole(roles[0])
-  }, [roles.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const optionIndex = options.indexOf(activeOption)
+  const oid = optionIndex >= 0 ? `O${optionIndex + 1}` : null
+  const qbafByOption = Object.fromEntries((qbafOptions || []).map(row => [row.option, row]))
+  const row = qbafByOption[activeOption]
+  const review = (oid && reviews?.[oid]) || null
+  const verdict = review?.summary || row?.review
   const optionArgs = args.filter(a => a.option === activeOption)
   const active = optionArgs.filter(a => a.status !== 'rejected')
   const removed = optionArgs.filter(a => a.status === 'rejected')
-  const columns = {}
-  active.forEach(arg => {
-    const column = arg.role || 'General'
-    if (!columns[column]) columns[column] = []
-    columns[column].push(arg)
-  })
-  const qbafByOption = Object.fromEntries((qbafOptions || []).map(row => [row.option, row]))
-  const activeRow = qbafByOption[activeOption]
-
-  const select = (arg) => {
-    setSelectedArg(arg)
-    setEditContent(arg.content)
-    setRemoveReason('')
-    setShowAdd(false)
+  const optionRoles = Array.from(new Set(active.map(a => a.role)))
+  const shown = roleFilter === 'all' ? active : active.filter(a => a.role === roleFilter)
+  const answeredBy = {}
+  active.forEach(a => (a.rebuts || []).forEach(target => { (answeredBy[target] = answeredBy[target] || []).push(a.arg_id) }))
+  const rebuttalReason = (from, to) => review?.rebuttals?.find(r => r.from === from && r.to === to)?.reason
+  const pendingTotal = pendingChanges + pendingFeedbackCount
+  const counts = {
+    support: active.filter(a => a.type === 'support').length,
+    attack: active.filter(a => a.type !== 'support').length,
+    answered: Object.keys(answeredBy).length,
+    repeats: active.filter(a => a.same_as).length
   }
-  const act = async (action, payload) => {
-    await onAction(action, payload)
-    setSelectedArg(null)
+
+  const saveEdit = async (arg) => {
+    const tag = (arg.content.match(ROLE_TAG) || [''])[0]
+    await onAction('modify', { arg_id: arg.arg_id, new_content: tag + editing.text.trim() })
+    setEditing(null)
+  }
+  const confirmRemove = async (arg) => {
+    await onAction('remove', { arg_id: arg.arg_id, reason: removing?.reason?.trim() || undefined })
+    setRemoving(null)
   }
   const addArgument = async () => {
-    if (!newArgContent.trim()) return
-    await onAction('add', { new_content: newArgContent, new_type: newArgType, new_option: activeOption, new_role: newArgRole })
-    setNewArgContent('')
-    setShowAdd(false)
+    if (!composer?.text.trim()) return
+    await onAction('add', { new_content: composer.text.trim(), new_type: composer.stance, new_option: activeOption, new_role: composer.role })
+    setComposer(null)
   }
-  const toggleRole = (role) => setCollapsedRoles(prev => {
-    const next = new Set(prev)
-    if (next.has(role)) next.delete(role)
-    else next.add(role)
-    return next
-  })
 
-  const pendingTotal = pendingChanges + pendingFeedbackCount
+  const section = (stance, title, empty) => {
+    const list = shown.filter(a => (stance === 'support' ? a.type === 'support' : a.type !== 'support'))
+    return (
+      <section className={`arg-section ${stance}`}>
+        <header className="arg-section-header">
+          <h4>{title}</h4>
+          <span className="count-pill">{list.length}</span>
+        </header>
+        {list.length === 0 && !composer && <p className="arg-empty">{empty}</p>}
+        {list.map(arg => (
+          <ArgumentRow key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable} planExists={planExists}
+            editing={editing?.argId === arg.arg_id ? editing : null}
+            removing={removing?.argId === arg.arg_id ? removing : null}
+            answeredBy={answeredBy[arg.arg_id]} rebuttalReason={rebuttalReason}
+            onEdit={() => { cancelAll(); setEditing({ argId: arg.arg_id, text: stripRoleTag(arg.content) }) }}
+            onEditChange={text => setEditing(prev => ({ ...prev, text }))}
+            onSaveEdit={() => saveEdit(arg)}
+            onCancel={cancelAll}
+            onRemove={() => { cancelAll(); setRemoving({ argId: arg.arg_id, reason: '' }) }}
+            onRemoveChange={reason => setRemoving(prev => ({ ...prev, reason }))}
+            onConfirmRemove={() => confirmRemove(arg)} />
+        ))}
+        {composer?.stance === stance ? (
+          <article className={`arg-row ${stance} is-composing`}>
+            <div className="arg-row-meta">
+              <div className="arg-row-tags">
+                <span className={`stance-pill ${stance}`}>{stance === 'support' ? 'Supports' : 'Concern'}</span>
+                <span className="arg-id">New</span>
+              </div>
+              <select className="input compact" value={composer.role} onChange={e => setComposer(prev => ({ ...prev, role: e.target.value }))}
+                aria-label="Role">
+                {roles.map(role => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </div>
+            <div className="arg-row-body">
+              <InlineEditor value={composer.text} onChange={text => setComposer(prev => ({ ...prev, text }))}
+                onSave={addArgument} onCancel={() => setComposer(null)} saveLabel="Add argument" disabled={!composer.text.trim()}
+                placeholder={stance === 'support'
+                  ? 'e.g. Her daughter visits daily and can supervise the home modifications.'
+                  : 'e.g. She has refused grab bars before; the bathroom changes may not be used.'} />
+            </div>
+            <div className="arg-row-side" />
+          </article>
+        ) : editable && (
+          <button type="button" className="add-row" onClick={() => { cancelAll(); setComposer({ stance, role: roleFilter !== 'all' ? roleFilter : roles[0], text: '' }) }}>
+            <Plus size={15} /> Add {stance === 'support' ? 'a supporting argument' : 'a concern'}
+          </button>
+        )}
+      </section>
+    )
+  }
 
   return (
     <div className="board">
       <div className="board-toolbar">
         <p className="board-intro">
           {phase === 'review'
-            ? 'Each care option was argued by the care team. Click an argument to edit or remove it, or add your own; then accept to write the plan.'
-            : 'Contest the arguments behind the plan: edit, remove or add one, then regenerate the plan.'}
+            ? 'The care team argued each option. Edit or remove any argument right where it is, or add your own; then accept to verify them and write the plan.'
+            : 'Contest the arguments behind the plan: edit, remove or add one right where it is, then regenerate the plan.'}
         </p>
         <div className="board-actions">
-          <button type="button" className="btn secondary sm" disabled={!editable} onClick={() => { setShowAdd(s => !s); setSelectedArg(null) }}>
-            <Plus size={15} /> Add argument
-          </button>
           {phase === 'review' && (
             <button type="button" className="btn primary sm" disabled={loading} onClick={onAccept}>
               <CheckCircle size={15} /> Accept all &amp; write plan
@@ -153,11 +283,11 @@ export default function ArgumentBoard({
         {options.map((option, idx) => {
           const isActive = activeOption === option
           const count = args.filter(a => a.option === option && a.status !== 'rejected').length
-          const row = qbafByOption[option]
+          const optionRow = qbafByOption[option]
           return (
             <button key={idx} type="button" role="tab" aria-selected={isActive} className={`option-tab ${isActive ? 'active' : ''}`}
-              onClick={() => { setActiveOption(option); setSelectedArg(null) }} title={option}>
-              {row && <span className={`tier-dot ${TIER_CLASS[row.tier]}`} />}
+              onClick={() => setActiveOption(option)} title={option}>
+              {optionRow && <span className={`tier-dot ${TIER_CLASS[optionRow.tier]}`} />}
               <span className="option-tab-label">Option {idx + 1}</span>
               <span className="count-pill">{count}</span>
             </button>
@@ -166,117 +296,71 @@ export default function ArgumentBoard({
       </div>
 
       {activeOption && (
-        <div className="option-summary">
-          <div className="option-summary-text">{activeOption}</div>
-          {activeRow && (
-            <span className={`tier-pill ${TIER_CLASS[activeRow.tier]}`}>{activeRow.tier_label} · {activeRow.strength.toFixed(2)}</span>
+        <section className="option-overview">
+          <div className="option-overview-head">
+            <div className="option-overview-title">
+              <span className="eyebrow">Option {optionIndex + 1}</span>
+              <h3>{activeOption}</h3>
+            </div>
+            {row && (
+              <div className="option-overview-score">
+                <span className={`tier-pill ${TIER_CLASS[row.tier]}`}>{row.tier_label}</span>
+                <span className="option-strength">
+                  <span className="meter"><span style={{ width: `${Math.round(row.strength * 100)}%` }} /></span>
+                  Strength <strong>{row.strength.toFixed(2)}</strong>
+                </span>
+              </div>
+            )}
+          </div>
+          {verdict ? (
+            <p className="option-verdict"><strong>Verification panel:</strong> {verdict}</p>
+          ) : (
+            <p className="option-verdict muted">
+              {phase === 'review'
+                ? 'When you accept, each option\'s arguments are verified together: validity, relevance to this patient, repeated points and concerns that another argument answers.'
+                : 'This option will be verified again when you regenerate.'}
+            </p>
           )}
+          <div className="option-stats">
+            <span>{counts.support} supporting</span>
+            <span>{counts.attack} concern{counts.attack === 1 ? '' : 's'}</span>
+            {counts.answered > 0 && <span>{counts.answered} answered</span>}
+            {counts.repeats > 0 && <span>{counts.repeats} repeated</span>}
+          </div>
+        </section>
+      )}
+
+      {optionRoles.length > 1 && (
+        <div className="role-filter" role="group" aria-label="Filter by role">
+          {['all', ...optionRoles].map(role => (
+            <button key={role} type="button" className={`chip ${roleFilter === role ? 'chip-primary' : ''}`} onClick={() => setRoleFilter(role)}>
+              {role === 'all' ? 'All roles' : role}
+            </button>
+          ))}
         </div>
       )}
 
-      <div className={`board-canvas ${selectedArg || showAdd ? 'has-sheet' : ''}`}>
-        {(selectedArg || showAdd) && (
-          <aside className="sheet" role="dialog" aria-label={selectedArg ? 'Edit argument' : 'Add argument'}>
-            <div className="sheet-header">
-              <h4>{selectedArg ? `Edit argument ${selectedArg.arg_id}` : 'Add an argument'}</h4>
-              <button type="button" className="icon-btn" onClick={() => { setSelectedArg(null); setShowAdd(false) }} aria-label="Close"><X /></button>
-            </div>
-            {selectedArg ? (
-              <>
-                <div className="sheet-meta">
-                  <span className={`stance-pill ${selectedArg.type}`}>{selectedArg.type === 'support' ? 'Supports' : 'Challenges'}</span>
-                  <span>{selectedArg.role}</span>
-                </div>
-                {selectedArg.validation_note && <p className="sheet-note">Verifier: {selectedArg.validation_note}</p>}
-                <textarea className="input" rows={5} value={editContent} onChange={e => setEditContent(e.target.value)} />
-                <input className="input" placeholder="Why remove it? (optional, helps the system learn)" value={removeReason}
-                  onChange={e => setRemoveReason(e.target.value)} />
-                <div className="sheet-actions">
-                  <button type="button" className="btn danger-soft sm" onClick={() => act('remove', { arg_id: selectedArg.arg_id, reason: removeReason || undefined })}>
-                    <Trash size={14} /> Remove
-                  </button>
-                  <button type="button" className="btn primary sm" disabled={!editContent.trim() || editContent === selectedArg.content}
-                    onClick={() => act('modify', { arg_id: selectedArg.arg_id, new_content: editContent })}>
-                    Save edits
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <label className="field"><span className="field-label">Care option</span>
-                  <select className="input" value={activeOption || ''} onChange={e => setActiveOption(e.target.value)}>
-                    {options.map((opt, idx) => <option key={idx} value={opt}>{`Option ${idx + 1}: ${opt}`}</option>)}
-                  </select>
-                </label>
-                <div className="field-grid">
-                  <label className="field"><span className="field-label">Stance</span>
-                    <select className="input" value={newArgType} onChange={e => setNewArgType(e.target.value)}>
-                      <option value="support">Supports the option</option>
-                      <option value="attack">Challenges the option</option>
-                    </select>
-                  </label>
-                  <label className="field"><span className="field-label">Role</span>
-                    <select className="input" value={newArgRole} onChange={e => setNewArgRole(e.target.value)}>
-                      {roles.map((role, idx) => <option key={idx} value={role}>{role}</option>)}
-                    </select>
-                  </label>
-                </div>
-                <label className="field"><span className="field-label">Argument</span>
-                  <textarea className="input" rows={4} value={newArgContent} onChange={e => setNewArgContent(e.target.value)}
-                    placeholder="e.g. Her daughter visits daily and can supervise the home modifications." />
-                </label>
-                <div className="sheet-actions">
-                  <button type="button" className="btn primary sm" disabled={!newArgContent.trim()} onClick={addArgument}>
-                    <Plus size={14} /> Add argument
-                  </button>
-                </div>
-              </>
-            )}
-          </aside>
-        )}
+      {section('support', 'Supporting arguments', 'No supporting arguments for this option yet.')}
+      {section('attack', 'Concerns', 'No concerns raised for this option.')}
 
-        <div className="board-main">
-          {Object.keys(columns).length === 0 ? (
-            <div className="empty-note">No arguments for this option yet.</div>
-          ) : (
-            <div className="role-columns">
-              {Object.entries(columns).map(([role, roleArgs]) => {
-                const isCollapsed = collapsedRoles.has(role)
-                return (
-                  <div key={role} className={`role-column ${isCollapsed ? 'is-collapsed' : ''}`}>
-                    <button type="button" className="role-header" onClick={() => toggleRole(role)} aria-expanded={!isCollapsed}>
-                      <span className="role-name">{role}</span>
-                      <span className="count-pill">{roleArgs.length}</span>
-                      <ChevronDown size={14} className="role-chevron" />
-                    </button>
-                    {!isCollapsed && roleArgs.map(arg => (
-                      <ArgumentCard key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable}
-                        selected={selectedArg?.arg_id === arg.arg_id} onSelect={select} planExists={planExists} />
-                    ))}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {removed.length > 0 && (
-            <div className="removed-args">
-              <button type="button" className="link-btn" onClick={() => setShowRemoved(!showRemoved)} aria-expanded={showRemoved}>
-                <ChevronDown size={13} className={`chip-chevron ${showRemoved ? 'open' : ''}`} />
-                {showRemoved ? 'Hide' : 'Show'} removed arguments ({removed.length})
+      {removed.length > 0 && (
+        <div className="removed-args">
+          <button type="button" className="link-btn" onClick={() => setShowRemoved(!showRemoved)} aria-expanded={showRemoved}>
+            <ChevronDown size={13} className={`chip-chevron ${showRemoved ? 'open' : ''}`} />
+            {showRemoved ? 'Hide' : 'Show'} removed arguments ({removed.length})
+          </button>
+          {showRemoved && removed.map(arg => (
+            <div key={arg.arg_id} className="removed-arg">
+              <span className="arg-id">{arg.arg_id}</span>
+              <span className="removed-text">{stripRoleTag(arg.content)}</span>
+              {arg.rejection_reason && <span className="removed-reason">({arg.rejection_reason})</span>}
+              <button type="button" className="btn ghost xs" disabled={!editable} onClick={() => onAction('restore', { arg_id: arg.arg_id })}>
+                <Refresh size={12} /> Restore
               </button>
-              {showRemoved && removed.map(arg => (
-                <div key={arg.arg_id} className="removed-arg">
-                  <span className="arg-id">{arg.arg_id}</span>
-                  <span className="removed-text">{stripRoleTag(arg.content)}</span>
-                  {arg.rejection_reason && <span className="removed-reason">({arg.rejection_reason})</span>}
-                  <button type="button" className="btn ghost xs" disabled={!editable} onClick={() => onAction('restore', { arg_id: arg.arg_id })}>Restore</button>
-                </div>
-              ))}
             </div>
-          )}
+          ))}
         </div>
-      </div>
+      )}
     </div>
   )
 }

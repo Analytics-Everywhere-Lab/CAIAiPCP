@@ -77,6 +77,37 @@ class FakeOllama:
             text = "Sorry, I cannot produce that."  # every structured answer fails, in JSON mode or not
         return FakeResponse(text, bool(payload.get("stream")))
 
+    @staticmethod
+    def verify_group(prompt: str) -> Dict:
+        """Judge an option's arguments the way a careful panel would for the test patient:
+        home-based supports are central, the generic cost concern is minor at home and
+        is answered by the first support, and a repeated point is marked as such."""
+        option = re.search(r"^Care option (O\d+): (.+)$", prompt, re.MULTILINE)
+        at_home = bool(option) and "Home safety" in option.group(2)
+        rows = re.findall(r"^(A\d+) \| (support|challenge) \| ([^|]+?) \| (.+)$", prompt, re.MULTILINE)
+        results, seen, rebuttals = [], {}, []
+        first_support = next((arg_id for arg_id, stance, _, _ in rows if stance == "support"), None)
+        for arg_id, stance, author, text in rows:
+            lowered = text.lower()
+            if author.strip() == "clinician" or any(k in lowered for k in ("stay home", "age in place", "prefers")):
+                validity, relevance = 0.85, "high"
+            elif stance == "support":
+                validity, relevance = (0.86, "high") if at_home else (0.6, "moderate")
+            elif "costly" in lowered:
+                validity, relevance = (0.55, "low") if at_home else (0.75, "high")
+            else:
+                validity, relevance = 0.7, "moderate"
+            key = (stance, lowered)
+            results.append({"id": arg_id, "validity": validity, "relevance": relevance, "same_as": seen.get(key),
+                            "refs": [1], "note": f"{'Central' if relevance == 'high' else 'Secondary'} point for this patient."})
+            seen.setdefault(key, arg_id)
+            if at_home and first_support and stance == "challenge" and "costly" in lowered and not rebuttals:
+                rebuttals.append({"from": first_support, "to": arg_id,
+                                  "reason": "Grab bars and rails are low-cost changes."})
+        summary = ("Strong fit: it targets her falls risk at home, as she wishes; cost is minor." if at_home
+                   else "Weak fit: relocation conflicts with her wish to stay at home.")
+        return {"arguments": results, "rebuttals": rebuttals, "summary": summary}
+
     # ------------------------------------------------------------------ script
 
     def respond(self, prompt: str) -> str:
@@ -103,25 +134,14 @@ class FakeOllama:
                 return dump({"arguments": []})
             return dump({"arguments": [{"memory_id": ids[0], "option_id": "O2", "stance": "attack",
                                         "content": "The patient prefers to age in place, so relocation should come last."}]})
-        if "provide 1-2 supporting arguments" in prompt:
+        if "Assess this care option for this patient from your perspective" in prompt:
             role = re.search(r"As a ([A-Za-z ]+?) named", prompt) or re.search(r"You are a ([A-Za-z ]+?) named", prompt)
             option = "home" if "Home safety" in prompt.split("Care Option Being Evaluated:")[-1] else "facility"
-            return f"Support: The {option} option addresses the falls risk from a {role.group(1) if role else 'clinical'} perspective."
-        if "provide 1-2 concerns or challenges" in prompt:
-            option = "home" if "Home safety" in prompt.split("Care Option Being Evaluated:")[-1] else "facility"
-            return f"Challenge: The {option} option may be costly and disruptive for the patient."
-        if "Generate a specific medical search query" in prompt:
-            return "elderly home modification falls evidence"
-        if "Updated Validity Score" in prompt:
-            return "Updated Validity Score: 0.55\nThe evidence partly supports the argument."
-        if "Confirmed Score" in prompt:
-            return "Confirmed Score: 0.85"
-        if 'Response format: "Validity Score: X.XX"' in prompt:
-            argument = prompt.split("Argument (")[-1]
-            score = 0.45 if "costly" in argument else 0.72
-            if "Clinician" in argument or "stay home" in argument or "age in place" in argument:
-                score = 0.8
-            return f"Validity Score: {score:.2f}\nThe argument is clinically reasonable for this patient."
+            return (f"Support: The {option} option addresses the falls risk from a "
+                    f"{role.group(1) if role else 'clinical'} perspective.\n"
+                    f"Challenge: The {option} option may be costly and disruptive for the patient.")
+        if "verification panel for an interdisciplinary aging-in-place care plan" in prompt:
+            return dump(self.verify_group(prompt))
         if "contestation interpreter" in prompt:
             if self.feedback_ops is not None:
                 return dump(self.feedback_ops(prompt))

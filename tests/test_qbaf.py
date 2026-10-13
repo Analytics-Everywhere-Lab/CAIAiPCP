@@ -93,3 +93,46 @@ def test_delta_detects_ranking_tier_and_new_options():
     assert delta["options_added"] == ["Adult day program"]
     assert delta["max_strength_shift"] > 0
     assert qbaf_delta(None, after)["has_previous"] is False
+
+
+def test_relevance_and_repetition_shape_base_scores():
+    central = arg("A1", "support", 0.8, 0, relevance="high")
+    generic = arg("A2", "attack", 0.8, 0, relevance="low")
+    repeat = arg("A3", "attack", 0.8, 0, relevance="low", same_as="A2")
+    qbaf = evaluate_qbaf(OPTIONS, [central, generic, repeat])
+    rows = qbaf["arguments"]
+    assert rows["A1"]["base"] == pytest.approx(0.8)
+    assert rows["A2"]["base"] == pytest.approx(0.8 * 0.3)
+    assert rows["A3"]["base"] == pytest.approx(0.8 * 0.3 * 0.35)  # a repeated point is not a second full vote
+    # One central benefit is not cancelled out by generic concerns of the same validity,
+    # as it was when every argument counted only by its validity.
+    unweighted = evaluate_qbaf(OPTIONS, [arg("A1", "support", 0.8, 0), arg("A2", "attack", 0.8, 0),
+                                         arg("A3", "attack", 0.8, 0)])
+    assert strengths(unweighted)["O1"] < 0.45 < 0.55 < strengths(qbaf)["O1"]
+
+
+def test_a_repeat_of_a_removed_argument_counts_in_full():
+    lone = arg("A3", "attack", 0.8, 0, relevance="low", same_as="A2")
+    assert evaluate_qbaf(OPTIONS, [lone])["arguments"]["A3"]["base"] == pytest.approx(0.8 * 0.3)
+
+
+def test_a_rebuttal_weakens_the_concern_it_answers():
+    support = arg("A1", "support", 0.8, 0, relevance="high")
+    concern = arg("A2", "attack", 0.8, 0, relevance="high")
+    unanswered = strengths(evaluate_qbaf(OPTIONS, [support, concern]))["O1"]
+    support.rebuts = ["A2"]
+    answered = evaluate_qbaf(OPTIONS, [support, concern])
+    assert strengths(answered)["O1"] > unanswered and concern.strength < 0.8
+    assert {"from": "A1", "to": "A2", "relation": "attack", "kind": "rebuttal"} in answered["edges"]
+
+
+def test_confidence_combines_decisiveness_and_grounding():
+    def option_row(validity):
+        return evaluate_qbaf(OPTIONS, [arg("A1", "support", validity, 0, relevance="high"),
+                                       arg("A2", "support", validity, 0, relevance="high")])["options"][0]
+    sound, shaky = option_row(0.9), option_row(0.3)
+    assert sound["grounding"] == pytest.approx(0.9) and sound["confidence"] > 0.75
+    assert shaky["confidence"] < sound["confidence"]
+    balanced = evaluate_qbaf(OPTIONS, [arg("A1", "support", 0.8, 0, relevance="high"),
+                                       arg("A2", "attack", 0.8, 0, relevance="high")])["options"][0]
+    assert balanced["decisiveness"] == pytest.approx(0.0) and balanced["confidence"] == pytest.approx(0.4)
