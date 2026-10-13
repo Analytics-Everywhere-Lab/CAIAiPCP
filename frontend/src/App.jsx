@@ -379,7 +379,6 @@ function App() {
             <BrandMark size={36} />
             <div className="brand-text">
               <span className="brand-title">Aging-in-Place Care Planner</span>
-              <span className="brand-sub">Contestable AI care coordination</span>
             </div>
           </div>
         </div>
