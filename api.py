@@ -196,7 +196,8 @@ def _review_note(state: Dict[str, Any]) -> str:
     note += f", including {learned} drawn from lessons of earlier reviews." if learned else "."
     note += " Review them in the panel on the right, then accept to generate the care plan."
     if state.get("team_selection_rationale"):
-        note += f"\n\n_{clip_text(state['team_selection_rationale'], 400)}_"
+        # Shown in full; the rationale can span several paragraphs, so it is not wrapped in italics.
+        note += f"\n\n**Why this team:** {state['team_selection_rationale'].strip()}"
     return note
 
 
