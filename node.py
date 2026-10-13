@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set
 from mcp_utils import _fetch_available_slots_for_roles
 from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState, active_progress
-from llm_caller import call_llm, call_llm_json, call_llm_stream
+from llm_caller import call_llm, call_llm_json, stream_text
 
 def _report_progress(state: GraphState, key: str, msg: str):
     state[key] = msg
@@ -96,14 +96,11 @@ def _stream_llm(state: GraphState, prompt: str, temperature: float, max_tokens: 
     """Call the LLM, streaming partial text to the progress tracker when enabled."""
     if not state.get("enable_streaming", False):
         return call_llm(prompt, temperature=temperature, max_tokens=max_tokens)
-    response_chunks = []
-    for chunk in call_llm_stream(prompt, temperature=temperature, max_tokens=max_tokens):
-        response_chunks.append(chunk)
-        partial = "".join(response_chunks)
-        state["streaming_chunk"] = chunk
+    partial = ""
+    for partial in stream_text(prompt, temperature=temperature, max_tokens=max_tokens):
         state["partial_response"] = partial
         _report_progress(state, "current_stream_text", partial)
-    return "".join(response_chunks)
+    return partial
 
 
 def _compact_rag_context(state: GraphState, max_docs: int = 8, max_chars: int = 600) -> str:
@@ -173,13 +170,10 @@ def care_plan_generator(state: GraphState) -> GraphState:
 
     max_toks = get_max_tokens_for_severity(2048, state["severity"])
     if state.get("enable_streaming", False):
-        response_chunks = []
-        for chunk in call_llm_stream(prompt, temperature=0.6, max_tokens=max_toks):
-            response_chunks.append(chunk)
-            partial = "".join(response_chunks)
-            _report_progress(state, "options_generation_progress", partial)
-            _report_progress(state, "current_stream_text", partial)
-        response = "".join(response_chunks)
+        response = ""
+        for response in stream_text(prompt, temperature=0.6, max_tokens=max_toks):
+            _report_progress(state, "options_generation_progress", response)
+            _report_progress(state, "current_stream_text", response)
     else:
         response = call_llm(prompt, temperature=0.6, max_tokens=max_toks)
 
@@ -232,8 +226,7 @@ def argument_generator(state: GraphState) -> GraphState:
         max_toks = get_max_tokens_for_severity(1024, state["severity"])
         if state.get("enable_streaming", False):
             support_response = ""
-            for chunk in call_llm_stream(support_prompt, temperature=0.8, max_tokens=max_toks):
-                support_response += chunk
+            for support_response in stream_text(support_prompt, temperature=0.8, max_tokens=max_toks):
                 state["current_argument_stream"] = support_response
                 _report_progress(state, "current_stream_text", support_response)
         else:
@@ -248,8 +241,7 @@ def argument_generator(state: GraphState) -> GraphState:
 
         if state.get("enable_streaming", False):
             attack_response = ""
-            for chunk in call_llm_stream(attack_prompt, temperature=0.8, max_tokens=max_toks):
-                attack_response += chunk
+            for attack_response in stream_text(attack_prompt, temperature=0.8, max_tokens=max_toks):
                 state["current_argument_stream"] = attack_response
                 _report_progress(state, "current_stream_text", attack_response)
         else:
@@ -384,8 +376,7 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
             max_toks = get_max_tokens_for_severity(1024, state["severity"])
             if state.get("enable_streaming", False):
                 support_response = ""
-                for chunk in call_llm_stream(support_prompt, temperature=0.7, max_tokens=max_toks):
-                    support_response += chunk
+                for support_response in stream_text(support_prompt, temperature=0.7, max_tokens=max_toks):
                     state["current_argument_stream"] = f"{agent.name}: {support_response}"
                     _report_progress(state, "current_stream_text", f"{agent.name}: {support_response}")
             else:
@@ -408,8 +399,7 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
             if state.get("enable_streaming", False):
                 attack_response = ""
-                for chunk in call_llm_stream(attack_prompt, temperature=0.7, max_tokens=max_toks):
-                    attack_response += chunk
+                for attack_response in stream_text(attack_prompt, temperature=0.7, max_tokens=max_toks):
                     state["current_argument_stream"] = f"{agent.name}: {attack_response}"
                     _report_progress(state, "current_stream_text", f"{agent.name}: {attack_response}")
             else:
@@ -668,10 +658,9 @@ def argument_validator(state: GraphState) -> GraphState:
         max_toks = get_max_tokens_for_severity(256, state["severity"])
         if state.get("enable_streaming", False):
             initial_response = ""
-            for chunk in call_llm_stream(
+            for initial_response in stream_text(
                 initial_prompt, temperature=0.3, max_tokens=max_toks
             ):
-                initial_response += chunk
                 state["current_validation_stream"] = initial_response
                 _report_progress(state, "current_stream_text", initial_response)
         else:
@@ -703,16 +692,9 @@ def argument_validator(state: GraphState) -> GraphState:
                 Create ONE focused search query that would help validate or refute this argument:"""
 
             sq_toks = get_max_tokens_for_severity(128, state["severity"])
-            if state.get("enable_streaming", False):
-                search_query = ""
-                for chunk in call_llm_stream(
-                    search_query_prompt, temperature=0.2, max_tokens=sq_toks
-                ):
-                    search_query += chunk
-            else:
-                search_query = call_llm(
-                    search_query_prompt, temperature=0.2, max_tokens=sq_toks
-                ).strip()
+            search_query = call_llm(
+                search_query_prompt, temperature=0.2, max_tokens=sq_toks
+            ).strip()
 
             # Retrieve additional evidence
             additional_docs = vector_db.search(search_query, n_results=3)
@@ -768,10 +750,9 @@ def argument_validator(state: GraphState) -> GraphState:
                 rv_toks = get_max_tokens_for_severity(512, state["severity"])
                 if state.get("enable_streaming", False):
                     revalidation_response = ""
-                    for chunk in call_llm_stream(
+                    for revalidation_response in stream_text(
                         revalidation_prompt, temperature=0.3, max_tokens=rv_toks
                     ):
-                        revalidation_response += chunk
                         _report_progress(state, "current_stream_text", revalidation_response)
                 else:
                     revalidation_response = call_llm(revalidation_prompt, temperature=0.3, max_tokens=rv_toks)
@@ -846,10 +827,9 @@ def argument_validator(state: GraphState) -> GraphState:
                 vf_toks = get_max_tokens_for_severity(1280, state["severity"])
                 if state.get("enable_streaming", False):
                     verification_response = ""
-                    for chunk in call_llm_stream(
+                    for verification_response in stream_text(
                         verification_prompt, temperature=0.2, max_tokens=vf_toks
                     ):
-                        verification_response += chunk
                         _report_progress(state, "current_stream_text", verification_response)
                 else:
                     verification_response = call_llm(verification_prompt, temperature=0.2, max_tokens=vf_toks)
@@ -1401,8 +1381,7 @@ def rag_retrieval(state: GraphState) -> GraphState:
 
     if state.get("enable_streaming", False):
         queries_text = ""
-        for chunk in call_llm_stream(prompt, temperature=0.3):
-            queries_text += chunk
+        for queries_text in stream_text(prompt, temperature=0.3):
             _report_progress(state, "rag_progress", f"Generating search queries:\n{queries_text}")
         queries = queries_text.strip().split("\n")
     else:

@@ -24,6 +24,8 @@ MEMORY_INSTANTIATE_ARGUMENTS = os.environ.get("MEMORY_INSTANTIATE_ARGUMENTS", "t
 CHAT_CONTEXT_TOKEN_BUDGET = int(os.environ.get("CHAT_CONTEXT_TOKEN_BUDGET", "2400"))
 CHAT_HISTORY_TOKEN_BUDGET = int(os.environ.get("CHAT_HISTORY_TOKEN_BUDGET", "1200"))
 CHAT_RECENT_TURNS = int(os.environ.get("CHAT_RECENT_TURNS", "6"))
+# Room for the assistant's answer. Only the context it reads is compacted, never its reply.
+CHAT_MAX_TOKENS = int(os.environ.get("CHAT_MAX_TOKENS", "4096"))
 
 # QBAF: arguments authored by the clinician are re-verified like any other, but
 # their base score blends the verifier's validity with this prior of clinician authority.

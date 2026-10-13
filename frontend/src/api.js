@@ -1,8 +1,8 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8001'
 
-export async function postJSON(path, body = {}) {
+async function sendJSON(method, path, body = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   })
@@ -10,6 +10,9 @@ export async function postJSON(path, body = {}) {
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
   return data
 }
+
+export const postJSON = (path, body) => sendJSON('POST', path, body)
+export const putJSON = (path, body) => sendJSON('PUT', path, body)
 
 export async function getJSON(path) {
   const res = await fetch(`${API_BASE}${path}`)
@@ -36,6 +39,10 @@ export async function streamPost(path, body, onEvent) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   })
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
