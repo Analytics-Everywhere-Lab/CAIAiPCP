@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("reportlab")
 
 from care_plan_document import parse_sections  # noqa: E402
-from pdf_export import _inline, markdown_to_flowables, render_care_plan_pdf  # noqa: E402
+from pdf_export import _inline, _plan_options, markdown_to_flowables, render_care_plan_pdf  # noqa: E402
 
 PLAN = {
     "version": 3,
@@ -32,6 +32,17 @@ PLAN = {
 def test_renders_a_pdf():
     pdf = render_care_plan_pdf(PLAN)
     assert pdf.startswith(b"%PDF-") and len(pdf) > 2000
+
+
+def test_options_set_aside_are_noted_not_ranked():
+    set_aside = {"option": "Assisted living", "tier": "set_aside", "tier_label": "Set aside", "strength": 0.3,
+                 "rank": 2, "top_supports": [], "top_attacks": [{"content": "She wants to stay home"}]}
+    plan = {**PLAN, "options": PLAN["options"] + [set_aside]}
+    in_plan, aside = _plan_options(plan)
+    assert [row["option"] for row in in_plan] == ["Home safety"] and aside == [set_aside]
+    assert render_care_plan_pdf(plan).startswith(b"%PDF-")
+    # With every option set aside the decision summary still explains why the table is empty.
+    assert render_care_plan_pdf({**PLAN, "options": [set_aside]}).startswith(b"%PDF-")
 
 
 def test_inline_markup_is_escaped_and_converted():

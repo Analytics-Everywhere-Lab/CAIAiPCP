@@ -9,6 +9,19 @@ const SOURCE_BADGES = {
 }
 const RELEVANCE_LABELS = { high: 'High relevance', moderate: 'Moderate relevance', low: 'Low relevance' }
 const ROLE_TAG = /^\[[^\]]{1,60}\]\s*/
+const ROLE_COLORS = 6
+// Groups that are not a discipline on the care team: the clinician adds arguments
+// under a discipline instead.
+const NON_DISCIPLINE_ROLES = new Set(['Learned guidance', 'Clinician feedback'])
+
+function stripRoleTag(content) {
+  return (content || '').replace(ROLE_TAG, '')
+}
+
+function roleInitials(role) {
+  const words = (role || 'General').split(/\s+/).filter(Boolean)
+  return (words.length > 1 ? words.map(word => word[0]).join('') : words[0].slice(0, 3)).slice(0, 3).toUpperCase()
+}
 
 function formatImpact(value) {
   const rounded = Math.round(value * 100) / 100
@@ -21,14 +34,11 @@ function impactClass(value) {
   return rounded > 0 ? 'impact-up' : rounded < 0 ? 'impact-down' : ''
 }
 
-function stripRoleTag(content) {
-  return (content || '').replace(ROLE_TAG, '')
-}
-
 // Shared editor for editing an argument in place and for adding a new one.
-function InlineEditor({ value, onChange, onSave, onCancel, saveLabel, placeholder, disabled }) {
+function InlineEditor({ value, onChange, onSave, onCancel, saveLabel, placeholder, disabled, children }) {
   return (
     <div className="inline-editor">
+      {children}
       <textarea className="input" autoFocus rows={3} value={value} placeholder={placeholder}
         onChange={e => onChange(e.target.value)}
         onKeyDown={e => {
@@ -44,21 +54,28 @@ function InlineEditor({ value, onChange, onSave, onCancel, saveLabel, placeholde
   )
 }
 
+function StancePill({ stance }) {
+  return <span className={`stance-pill ${stance}`}>{stance === 'support' ? 'Supports' : 'Concern'}</span>
+}
+
 function ArgumentRow({
-  arg, qbafRow, editable, planExists, editing, removing, answeredBy, rebuttalReason,
+  arg, qbafRow, editable, planExists, editing, removing, answeredBy, rebuttal,
   onEdit, onEditChange, onSaveEdit, onCancel, onRemove, onRemoveChange, onConfirmRemove
 }) {
   const source = SOURCE_BADGES[arg.source]
   const stance = arg.type === 'support' ? 'support' : 'attack'
   const pendingReevaluation = planExists && !qbafRow
+  const answers = [
+    ...(arg.rebuts || []).map(target => ({ target, partial: false })),
+    ...(arg.partly_rebuts || []).map(target => ({ target, partial: true }))
+  ]
   return (
     <article className={`arg-row ${stance} ${editing ? 'is-editing' : ''} ${removing ? 'is-removing' : ''}`} id={`arg-${arg.arg_id}`}>
       <div className="arg-row-meta">
         <div className="arg-row-tags">
-          <span className={`stance-pill ${stance}`}>{stance === 'support' ? 'Supports' : 'Concern'}</span>
+          <StancePill stance={stance} />
           <span className="arg-id">{arg.arg_id}</span>
         </div>
-        <span className="arg-role">{arg.role}</span>
         {source && <span className={`badge ${source.className}`}>{source.label}{arg.feedback_id ? ` · ${arg.feedback_id}` : ''}</span>}
         {arg.status === 'edited' && <span className="badge badge-edited">Edited</span>}
       </div>
@@ -85,17 +102,20 @@ function ArgumentRow({
         {arg.status === 'edited' && arg.original_content && !editing && (
           <p className="arg-original">Was: {stripRoleTag(arg.original_content)}</p>
         )}
-        {(arg.target_arg_id || arg.rebuts?.length > 0 || answeredBy?.length > 0 || arg.same_as) && (
+        {(arg.target_arg_id || answers.length > 0 || answeredBy?.length > 0 || arg.same_as) && (
           <div className="arg-links">
             {arg.target_arg_id && <a className="arg-link" href={`#arg-${arg.target_arg_id}`}>Responds to {arg.target_arg_id}</a>}
-            {arg.rebuts?.map(target => (
-              <a key={target} className="arg-link answers" href={`#arg-${target}`} title={rebuttalReason(arg.arg_id, target) || ''}>
-                Answers {target}{rebuttalReason(arg.arg_id, target) ? `: ${rebuttalReason(arg.arg_id, target)}` : ''}
-              </a>
-            ))}
-            {answeredBy?.map(source => (
-              <a key={source} className="arg-link answered" href={`#arg-${source}`} title={rebuttalReason(source, arg.arg_id) || ''}>
-                Answered by {source}, so it weighs less
+            {answers.map(({ target, partial }) => {
+              const reason = rebuttal(arg.arg_id, target)?.reason
+              return (
+                <a key={target} className="arg-link answers" href={`#arg-${target}`} title={reason || ''}>
+                  {partial ? 'Partly answers' : 'Answers'} {target}{reason ? `: ${reason}` : ''}
+                </a>
+              )
+            })}
+            {answeredBy?.map(({ source: from, partial }) => (
+              <a key={from} className="arg-link answered" href={`#arg-${from}`} title={rebuttal(from, arg.arg_id)?.reason || ''}>
+                {partial ? 'Partly answered' : 'Answered'} by {from}, so it weighs less
               </a>
             ))}
             {arg.same_as && <a className="arg-link repeat" href={`#arg-${arg.same_as}`}>Repeats {arg.same_as}, counted once</a>}
@@ -135,10 +155,10 @@ export default function ArgumentBoard({
   onAction, onAccept, onRegenerate
 }) {
   const [activeOption, setActiveOption] = useState(null)
-  const [roleFilter, setRoleFilter] = useState('all')
+  const [collapsedRoles, setCollapsedRoles] = useState(() => new Set())
   const [editing, setEditing] = useState(null) // { argId, text }
   const [removing, setRemoving] = useState(null) // { argId, reason }
-  const [composer, setComposer] = useState(null) // { stance, role, text }
+  const [composer, setComposer] = useState(null) // { role, stance, text }
   const [showRemoved, setShowRemoved] = useState(false)
 
   const editable = !loading && (phase === 'review' || phase === 'plan')
@@ -155,8 +175,9 @@ export default function ArgumentBoard({
   }
   useEffect(cancelAll, [activeOption])
 
-  const roles = Array.from(new Set(args.filter(a => a.source === 'agent' || a.source === 'human').map(a => a.role)))
-  if (roles.length === 0) roles.push('Clinician')
+  // Every role keeps the same colour on every option.
+  const caseRoles = Array.from(new Set(args.map(a => a.role || 'General')))
+  const roleColor = (role) => `role-c${Math.max(0, caseRoles.indexOf(role)) % ROLE_COLORS}`
 
   const optionIndex = options.indexOf(activeOption)
   const oid = optionIndex >= 0 ? `O${optionIndex + 1}` : null
@@ -167,11 +188,12 @@ export default function ArgumentBoard({
   const optionArgs = args.filter(a => a.option === activeOption)
   const active = optionArgs.filter(a => a.status !== 'rejected')
   const removed = optionArgs.filter(a => a.status === 'rejected')
-  const optionRoles = Array.from(new Set(active.map(a => a.role)))
-  const shown = roleFilter === 'all' ? active : active.filter(a => a.role === roleFilter)
   const answeredBy = {}
-  active.forEach(a => (a.rebuts || []).forEach(target => { (answeredBy[target] = answeredBy[target] || []).push(a.arg_id) }))
-  const rebuttalReason = (from, to) => review?.rebuttals?.find(r => r.from === from && r.to === to)?.reason
+  active.forEach(a => {
+    ;(a.rebuts || []).forEach(target => { (answeredBy[target] = answeredBy[target] || []).push({ source: a.arg_id, partial: false }) })
+    ;(a.partly_rebuts || []).forEach(target => { (answeredBy[target] = answeredBy[target] || []).push({ source: a.arg_id, partial: true }) })
+  })
+  const rebuttal = (from, to) => review?.rebuttals?.find(r => r.from === from && r.to === to)
   const pendingTotal = pendingChanges + pendingFeedbackCount
   const counts = {
     support: active.filter(a => a.type === 'support').length,
@@ -179,6 +201,27 @@ export default function ArgumentBoard({
     answered: Object.keys(answeredBy).length,
     repeats: active.filter(a => a.same_as).length
   }
+
+  // Disciplines first, in team order; then learned guidance and feedback-derived arguments.
+  const disciplines = caseRoles.filter(role => !NON_DISCIPLINE_ROLES.has(role))
+  const groupRoles = [...disciplines, ...caseRoles.filter(role => NON_DISCIPLINE_ROLES.has(role))]
+    .filter(role => active.some(a => (a.role || 'General') === role) || (disciplines.includes(role) && editable))
+  const groups = groupRoles.map(role => {
+    const list = active.filter(a => (a.role || 'General') === role)
+    return {
+      role,
+      args: [...list.filter(a => a.type === 'support'), ...list.filter(a => a.type !== 'support')],
+      net: list.reduce((sum, a) => sum + (qbafArgs?.[a.arg_id]?.contribution || 0), 0),
+      hasImpact: list.some(a => qbafArgs?.[a.arg_id])
+    }
+  })
+
+  const toggleRole = (role) => setCollapsedRoles(prev => {
+    const next = new Set(prev)
+    if (next.has(role)) next.delete(role)
+    else next.add(role)
+    return next
+  })
 
   const saveEdit = async (arg) => {
     const tag = (arg.content.match(ROLE_TAG) || [''])[0]
@@ -195,53 +238,73 @@ export default function ArgumentBoard({
     setComposer(null)
   }
 
-  const section = (stance, title, empty) => {
-    const list = shown.filter(a => (stance === 'support' ? a.type === 'support' : a.type !== 'support'))
+  const roleGroup = ({ role, args: list, net, hasImpact }) => {
+    const collapsed = collapsedRoles.has(role)
+    const supports = list.filter(a => a.type === 'support').length
+    const concerns = list.length - supports
+    const composing = composer?.role === role
     return (
-      <section className={`arg-section ${stance}`}>
-        <header className="arg-section-header">
-          <h4>{title}</h4>
-          <span className="count-pill">{list.length}</span>
-        </header>
-        {list.length === 0 && !composer && <p className="arg-empty">{empty}</p>}
-        {list.map(arg => (
-          <ArgumentRow key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable} planExists={planExists}
-            editing={editing?.argId === arg.arg_id ? editing : null}
-            removing={removing?.argId === arg.arg_id ? removing : null}
-            answeredBy={answeredBy[arg.arg_id]} rebuttalReason={rebuttalReason}
-            onEdit={() => { cancelAll(); setEditing({ argId: arg.arg_id, text: stripRoleTag(arg.content) }) }}
-            onEditChange={text => setEditing(prev => ({ ...prev, text }))}
-            onSaveEdit={() => saveEdit(arg)}
-            onCancel={cancelAll}
-            onRemove={() => { cancelAll(); setRemoving({ argId: arg.arg_id, reason: '' }) }}
-            onRemoveChange={reason => setRemoving(prev => ({ ...prev, reason }))}
-            onConfirmRemove={() => confirmRemove(arg)} />
-        ))}
-        {composer?.stance === stance ? (
-          <article className={`arg-row ${stance} is-composing`}>
-            <div className="arg-row-meta">
-              <div className="arg-row-tags">
-                <span className={`stance-pill ${stance}`}>{stance === 'support' ? 'Supports' : 'Concern'}</span>
-                <span className="arg-id">New</span>
-              </div>
-              <select className="input compact" value={composer.role} onChange={e => setComposer(prev => ({ ...prev, role: e.target.value }))}
-                aria-label="Role">
-                {roles.map(role => <option key={role} value={role}>{role}</option>)}
-              </select>
-            </div>
-            <div className="arg-row-body">
-              <InlineEditor value={composer.text} onChange={text => setComposer(prev => ({ ...prev, text }))}
-                onSave={addArgument} onCancel={() => setComposer(null)} saveLabel="Add argument" disabled={!composer.text.trim()}
-                placeholder={stance === 'support'
-                  ? 'e.g. Her daughter visits daily and can supervise the home modifications.'
-                  : 'e.g. She has refused grab bars before; the bathroom changes may not be used.'} />
-            </div>
-            <div className="arg-row-side" />
-          </article>
-        ) : editable && (
-          <button type="button" className="add-row" onClick={() => { cancelAll(); setComposer({ stance, role: roleFilter !== 'all' ? roleFilter : roles[0], text: '' }) }}>
-            <Plus size={15} /> Add {stance === 'support' ? 'a supporting argument' : 'a concern'}
-          </button>
+      <section key={role} className={`role-group ${roleColor(role)} ${collapsed ? 'is-collapsed' : ''}`}>
+        <button type="button" className="role-group-header" onClick={() => toggleRole(role)} aria-expanded={!collapsed}>
+          <span className="role-avatar" aria-hidden="true">{roleInitials(role)}</span>
+          <span className="role-group-title">
+            <span className="role-group-name">{role}</span>
+            <span className="role-group-sub">
+              {supports} supporting · {concerns} concern{concerns === 1 ? '' : 's'}
+            </span>
+          </span>
+          {hasImpact && (
+            <span className="role-net" title="Combined impact of this role's arguments on the option's strength">
+              Net impact <strong className={impactClass(net)}>{formatImpact(net)}</strong>
+            </span>
+          )}
+          <ChevronDown size={16} className="role-group-chevron" />
+        </button>
+        {!collapsed && (
+          <div className="role-group-body">
+            {list.length === 0 && !composing && <p className="arg-empty">No arguments from this role for this option.</p>}
+            {list.map(arg => (
+              <ArgumentRow key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable} planExists={planExists}
+                editing={editing?.argId === arg.arg_id ? editing : null}
+                removing={removing?.argId === arg.arg_id ? removing : null}
+                answeredBy={answeredBy[arg.arg_id]} rebuttal={rebuttal}
+                onEdit={() => { cancelAll(); setEditing({ argId: arg.arg_id, text: stripRoleTag(arg.content) }) }}
+                onEditChange={text => setEditing(prev => ({ ...prev, text }))}
+                onSaveEdit={() => saveEdit(arg)}
+                onCancel={cancelAll}
+                onRemove={() => { cancelAll(); setRemoving({ argId: arg.arg_id, reason: '' }) }}
+                onRemoveChange={reason => setRemoving(prev => ({ ...prev, reason }))}
+                onConfirmRemove={() => confirmRemove(arg)} />
+            ))}
+            {composing ? (
+              <article className="arg-row is-composing">
+                <div className="arg-row-meta">
+                  <div className="arg-row-tags"><span className="arg-id">New</span></div>
+                </div>
+                <div className="arg-row-body">
+                  <InlineEditor value={composer.text} onChange={text => setComposer(prev => ({ ...prev, text }))}
+                    onSave={addArgument} onCancel={() => setComposer(null)} saveLabel="Add argument" disabled={!composer.text.trim()}
+                    placeholder={composer.stance === 'support'
+                      ? 'e.g. Her daughter visits daily and can supervise the home modifications.'
+                      : 'e.g. She has refused grab bars before; the bathroom changes may not be used.'}>
+                    <div className="stance-toggle" role="radiogroup" aria-label="Stance">
+                      {['support', 'attack'].map(stance => (
+                        <button key={stance} type="button" role="radio" aria-checked={composer.stance === stance}
+                          className={`stance-option ${stance} ${composer.stance === stance ? 'active' : ''}`}
+                          onClick={() => setComposer(prev => ({ ...prev, stance }))}>
+                          {stance === 'support' ? 'Supports the option' : 'Raises a concern'}
+                        </button>
+                      ))}
+                    </div>
+                  </InlineEditor>
+                </div>
+              </article>
+            ) : editable && disciplines.includes(role) && (
+              <button type="button" className="add-row" onClick={() => { cancelAll(); setComposer({ role, stance: 'support', text: '' }) }}>
+                <Plus size={15} /> Add an argument as {role}
+              </button>
+            )}
+          </div>
         )}
       </section>
     )
@@ -252,7 +315,7 @@ export default function ArgumentBoard({
       <div className="board-toolbar">
         <p className="board-intro">
           {phase === 'review'
-            ? 'The care team argued each option. Edit or remove any argument right where it is, or add your own; then accept to verify them and write the plan.'
+            ? 'Each discipline on the care team argued the options. Edit or remove any argument right where it is, or add your own under a discipline; then accept to verify them and write the plan.'
             : 'Contest the arguments behind the plan: edit, remove or add one right where it is, then regenerate the plan.'}
         </p>
         <div className="board-actions">
@@ -312,6 +375,12 @@ export default function ArgumentBoard({
               </div>
             )}
           </div>
+          {row?.tier === 'set_aside' && (
+            <p className="option-verdict muted">
+              After your review the arguments no longer support this option, so it is set aside and left out of the plan.
+              Add or restore supporting arguments to bring it back.
+            </p>
+          )}
           {verdict ? (
             <p className="option-verdict"><strong>Verification panel:</strong> {verdict}</p>
           ) : (
@@ -330,18 +399,7 @@ export default function ArgumentBoard({
         </section>
       )}
 
-      {optionRoles.length > 1 && (
-        <div className="role-filter" role="group" aria-label="Filter by role">
-          {['all', ...optionRoles].map(role => (
-            <button key={role} type="button" className={`chip ${roleFilter === role ? 'chip-primary' : ''}`} onClick={() => setRoleFilter(role)}>
-              {role === 'all' ? 'All roles' : role}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {section('support', 'Supporting arguments', 'No supporting arguments for this option yet.')}
-      {section('attack', 'Concerns', 'No concerns raised for this option.')}
+      {groups.map(roleGroup)}
 
       {removed.length > 0 && (
         <div className="removed-args">

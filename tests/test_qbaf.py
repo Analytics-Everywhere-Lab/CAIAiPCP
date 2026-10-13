@@ -81,8 +81,27 @@ def test_tiers():
     assert tier_for(0.8)["tier"] == "recommended"
     assert tier_for(0.6)["tier"] == "conditional"
     assert tier_for(0.5)["tier"] == "uncertain"
-    assert tier_for(0.35)["tier"] == "deferred"
-    assert tier_for(0.1)["tier"] == "not_recommended"
+    assert tier_for(0.35)["tier"] == "set_aside"  # never presented as "not recommended"
+    assert tier_for(0.1)["tier"] == "set_aside"
+
+
+def test_only_the_clinicians_contest_sets_an_option_aside():
+    concern = arg("A1", "attack", 0.9, 1)
+    # The system's own arguments leave Option 2 weak: it stays for clinical judgment instead of
+    # being turned down by the system that proposed it.
+    row = evaluate_qbaf(OPTIONS, [concern])["options"][1]
+    assert row["strength"] < 0.45
+    assert row["tier"] == "uncertain" and row["in_plan"] and not row["contested"]
+    # Once the clinician removes its support, the weak option is set aside.
+    removed = arg("A2", "support", 0.6, 1, human_status="rejected")
+    row = evaluate_qbaf(OPTIONS, [concern, removed])["options"][1]
+    assert row["tier"] == "set_aside" and not row["in_plan"] and row["contested"]
+    # ... and likewise when the clinician adds a concern of their own.
+    added = arg("A3", "attack", 0.7, 1, source="human", human_status="added")
+    assert evaluate_qbaf(OPTIONS, [arg("A1", "attack", 0.5, 1), added])["options"][1]["tier"] == "set_aside"
+    # A change to the other option does not count against this one.
+    other = arg("A4", "support", 0.6, 0, human_status="rejected")
+    assert evaluate_qbaf(OPTIONS, [concern, other])["options"][1]["tier"] == "uncertain"
 
 
 def test_delta_detects_ranking_tier_and_new_options():

@@ -132,6 +132,95 @@ def get_max_tokens_for_severity(base_tokens: int, severity: str) -> int:
     if "very high" in s: return max(15000, int(base_tokens * 2.5))
     if "high" in s: return max(12000, int(base_tokens * 2))
     return base_tokens
+MAX_CARE_OPTIONS = 2
+OPTION_CANDIDATES = 3
+_FIT_ORDER = {"strong": 0, "possible": 1}
+
+
+def _screened_options(state: GraphState, context_section: str, memory_section: str) -> List[str]:
+    """Propose candidate options and keep only those the planner itself would recommend.
+
+    An option that the system proposes and then weighs as "not recommended" reads as
+    the system contradicting itself, so candidates are screened for fit with the
+    patient's wishes, needs and safety before the care team argues them."""
+    prompt = f"""You are an expert geriatric care planner. Propose care options for this older adult's aging-in-place care plan.
+    {context_section}
+    {memory_section}
+    Patient Information:
+    {state['patient_info']}
+
+    Propose {OPTION_CANDIDATES} candidate options. Each is a concrete, implementable package of care: what is done, by whom,
+    and how it helps this person live safely. Propose only options you would actually recommend for THIS patient:
+    respect their stated wishes, address their main risks, and never add an option you would advise against just
+    for contrast.
+
+    Then screen each candidate as a careful clinician would:
+    - "fit": "strong" (clearly right for this patient), "possible" (reasonable, with conditions) or "poor" (conflicts
+      with the patient's wishes, needs or safety; you would not recommend it)
+    - "why": one sentence.
+
+    Return JSON only: {{"options": [{{"option": "<short title of what it involves>", "fit": "strong", "why": "..."}}]}}"""
+    result = call_llm_json(prompt, temperature=0.5, max_tokens=get_max_tokens_for_severity(1536, state["severity"]))
+    items = result.get("options") if isinstance(result, dict) else None
+    candidates = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        text = " ".join(str(item.get("option") or "").replace("**", "").split())
+        if text and text.lower() not in {c["option"].lower() for c in candidates}:
+            fit = str(item.get("fit") or "").strip().lower()
+            candidates.append({"option": text, "fit": fit if fit in ("strong", "possible", "poor") else "possible",
+                               "why": clip_text(str(item.get("why") or "").strip(), 300)})
+    kept = sorted((c for c in candidates if c["fit"] != "poor"), key=lambda c: _FIT_ORDER[c["fit"]])[:MAX_CARE_OPTIONS]
+    for candidate in candidates:
+        candidate["kept"] = candidate in kept
+    state["option_screening"] = candidates
+    if kept and state.get("enable_streaming", False):
+        # Show only what is proposed: a candidate that failed the screen is never presented,
+        # so the trace does not read as the system turning down its own suggestion.
+        _report_progress(state, "current_stream_text",
+                         "\n".join(f"Option {i}: {c['option']}. {c['why']}" for i, c in enumerate(kept, 1)))
+    print(f"Option screening: kept {len(kept)} of {len(candidates)} candidates")
+    return [c["option"] for c in kept]
+
+
+def _unscreened_options(state: GraphState, context_section: str, memory_section: str) -> List[str]:
+    prompt = f"""You are an expert geriatric care planner. Based on the following patient information and relevant medical knowledge provided,
+    generate 1-2 specific handling options for their care plan in aging-in-place context.
+
+    {context_section}
+    {memory_section}
+    Patient Information:
+    {state['patient_info']}
+
+    Please provide handling options in the following format:
+    Option 1: [Description]
+    Option 2: [Description]
+    ...
+
+    Only include options you would recommend for this patient. Focus on practical, implementable options that
+    support independent living while ensuring safety and quality of life."""
+
+    max_toks = get_max_tokens_for_severity(2048, state["severity"])
+    if state.get("enable_streaming", False):
+        response = ""
+        for response in stream_text(prompt, temperature=0.6, max_tokens=max_toks):
+            _report_progress(state, "options_generation_progress", response)
+            _report_progress(state, "current_stream_text", response)
+    else:
+        response = call_llm(prompt, temperature=0.6, max_tokens=max_toks)
+
+    options = []
+    for line in response.split("\n"):
+        clean_line = line.strip().lstrip('*#- ')
+        if clean_line.startswith("Option") or clean_line.startswith("**Option"):
+            option_text = clean_line.split(":", 1)[1].strip() if ":" in clean_line else clean_line
+            option_text = option_text.replace("**", "").strip()
+            if option_text:
+                options.append(option_text)
+    return options[:MAX_CARE_OPTIONS]
+
+
 def care_plan_generator(state: GraphState) -> GraphState:
     """First LLM: Generate handling options based on patient information"""
     if not state.get("severity") or state.get("severity").lower() == "default":
@@ -154,39 +243,11 @@ def care_plan_generator(state: GraphState) -> GraphState:
 
     memory_section = _guidance_block(_memory_guidance(state, "option_generation", state["patient_info"]))
 
-    prompt = f"""You are an expert geriatric care planner. Based on the following patient information and relevant medical knowledge provided,
-    generate 1-2 specific handling options for their care plan in aging-in-place context.
-
-    {context_section}
-    {memory_section}
-    Patient Information:
-    {state['patient_info']}
-    
-    Please provide handling options in the following format:
-    Option 1: [Description]
-    Option 2: [Description]
-    ...
-    
-    Focus on practical, implementable options that support independent living while ensuring safety and quality of life."""
-
-    max_toks = get_max_tokens_for_severity(2048, state["severity"])
-    if state.get("enable_streaming", False):
-        response = ""
-        for response in stream_text(prompt, temperature=0.6, max_tokens=max_toks):
-            _report_progress(state, "options_generation_progress", response)
-            _report_progress(state, "current_stream_text", response)
-    else:
-        response = call_llm(prompt, temperature=0.6, max_tokens=max_toks)
-
-    # Parse handling options
-    options = []
-    for line in response.split("\n"):
-        clean_line = line.strip().lstrip('*#- ')
-        if clean_line.startswith("Option") or clean_line.startswith("**Option"):
-            option_text = clean_line.split(":", 1)[1].strip() if ":" in clean_line else clean_line
-            option_text = option_text.replace("**", "").strip()
-            if option_text:
-                options.append(option_text)
+    options = _screened_options(state, context_section, memory_section)
+    if not options:
+        # No usable screening answer (or no candidate passed it): fall back to the
+        # plain-text format, which asks only for options the planner would recommend.
+        options = _unscreened_options(state, context_section, memory_section)
 
     # Ensure we have at least one option
     if not options:
@@ -374,6 +435,8 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                 Give 1-2 supporting arguments and 1-2 concerns, drawing on your expertise in
                 {', '.join(agent.expertise_areas[:3])} and your priorities ({', '.join(agent.focus_priorities[:3])}).
                 Only raise a concern that genuinely applies to this patient; do not pad with generic risks.
+                State each concern as the risk or cost itself, not as a verdict on the option ("not recommended"):
+                the clinician weighs the arguments and decides.
                 Write each argument as one or two specific sentences about this patient.
 
                 Format each argument on its own line, starting with "Support:" or "Challenge:"."""
@@ -655,16 +718,22 @@ Arguments (id | stance | author | text):
 For EVERY argument give:
 - validity: 0.0 to 1.0, how accurate and well grounded the claim is for this patient (clinical knowledge and the evidence above).
 - relevance: "high" if it bears on this patient's main risks or stated goals, "moderate" if it matters but is secondary, "low" if it is generic or speculative for this patient.
-- same_as: the id of an EARLIER argument in the list that makes essentially the same point, otherwise null.
+- same_as: the id of an EARLIER argument in the list that makes the same point and adds nothing new; if it adds
+  anything (a different reason, risk, action or discipline's angle), use null.
 - refs: numbers of the evidence excerpts it relies on, e.g. [1, 3], or [].
 - note: one sentence explaining your judgement.
 Then list rebuttals: when an argument directly answers an argument of the opposite stance (for example a
-support showing that a concern is manageable for this patient), give {{"from": "<id>", "to": "<id>", "reason": "<one sentence>"}}.
-Finally write a summary: two or three sentences on how strong this option is for this patient and why.
+support showing that a concern is manageable for this patient), give
+{{"from": "<id>", "to": "<id>", "strength": "full" or "partial", "reason": "<one sentence>"}}:
+"full" if it resolves the point for this patient, "partial" if it only reduces it. Do not list an argument that
+merely coexists with the other one.
+Finally write a summary: two or three sentences on how well the arguments support this option for this patient
+and what it depends on. Describe the balance; do not give a verdict such as "not recommended", since the weighing
+and the clinician decide that.
 
 Return JSON only, in this shape:
 {{"arguments": [{{"id": "A1", "validity": 0.8, "relevance": "high", "same_as": null, "refs": [1], "note": "..."}}],
- "rebuttals": [{{"from": "A1", "to": "A2", "reason": "..."}}],
+ "rebuttals": [{{"from": "A1", "to": "A2", "strength": "full", "reason": "..."}}],
  "summary": "..."}}"""
 
 
@@ -682,7 +751,7 @@ def _apply_group_result(group: List[Argument], result: Optional[Dict[str, Any]],
     missing = []
     for arg in group:
         item = by_id.get(arg.arg_id)
-        arg.rebuts = []
+        arg.rebuts, arg.partly_rebuts = [], []
         if item is None:
             missing.append(arg.arg_id)
             arg.validity_score, arg.relevance, arg.same_as = DEFAULT_UNVERIFIED_VALIDITY, "moderate", None
@@ -708,11 +777,12 @@ def _apply_group_result(group: List[Argument], result: Optional[Dict[str, Any]],
             continue
         source = by_arg.get(str(item.get("from") or "").strip())
         target = by_arg.get(str(item.get("to") or "").strip())
-        if (source is None or target is None or source is target
-                or source.argument_type == target.argument_type or target.arg_id in source.rebuts):
+        if (source is None or target is None or source is target or source.argument_type == target.argument_type
+                or target.arg_id in source.rebuts + source.partly_rebuts):
             continue
-        source.rebuts.append(target.arg_id)
-        rebuttals.append({"from": source.arg_id, "to": target.arg_id,
+        partial = str(item.get("strength") or "").strip().lower().startswith("partial")
+        (source.partly_rebuts if partial else source.rebuts).append(target.arg_id)
+        rebuttals.append({"from": source.arg_id, "to": target.arg_id, "strength": "partial" if partial else "full",
                           "reason": clip_text(str(item.get("reason") or "").strip(), 300)})
     return {
         "summary": str(result.get("summary") or "").strip(),
@@ -733,6 +803,7 @@ def _cache_group(group: List[Argument], state: GraphState, basis: str, review: D
                 "relevance": arg.relevance,
                 "same_as": arg.same_as,
                 "rebuts": list(arg.rebuts),
+                "partly_rebuts": list(arg.partly_rebuts),
                 "docs": list(arg.supporting_docs),
                 "note": arg.validation_note,
                 "flags": list(arg.flags),
@@ -762,6 +833,7 @@ def _reuse_group(cached: Dict[str, Any], group: List[Argument]) -> Dict[str, Any
         # A repeat of a removed argument now carries the point itself.
         arg.same_as = entry["same_as"] if entry["same_as"] in present else None
         arg.rebuts = [target for target in entry["rebuts"] if target in present]
+        arg.partly_rebuts = [target for target in entry.get("partly_rebuts", []) if target in present]
         arg.supporting_docs = list(entry["docs"])
         arg.validation_note = entry["note"]
         arg.flags = list(entry["flags"])
@@ -779,7 +851,8 @@ def _group_report(group: List[Argument], review: Dict[str, Any]) -> str:
         repeat = f", repeats {arg.same_as}" if arg.same_as else ""
         lines.append(f"{arg.arg_id} {stance}: validity {arg.validity_score:.2f}, {arg.relevance} relevance{repeat}")
     for item in review.get("rebuttals", []):
-        lines.append(f"{item['from']} answers {item['to']}: {item['reason']}")
+        verb = "partly answers" if item.get("strength") == "partial" else "answers"
+        lines.append(f"{item['from']} {verb} {item['to']}: {item['reason']}")
     if review.get("summary"):
         lines.append(f"Panel: {review['summary']}")
     return "\n".join(lines)
@@ -956,8 +1029,10 @@ def _full_plan_prompt(state: GraphState, qbaf: Dict[str, Any], memory_section: s
 {qbaf_prompt_summary(qbaf, max_drivers=4)}
     {feedback_text}{memory_section}
     Requirements:
-    - Order the interventions by assessment. Recommend the options assessed "Recommended" or "Recommended with
-      conditions"; for lower-assessed options, briefly explain why they are not recommended now and what would change that.
+    - Write up as interventions only the options in the plan, ordered by assessment: "Recommended", "Recommended
+      with conditions" (state the conditions) and "Clinical judgment required" (say what the clinician should weigh).
+    - Options assessed "Set aside" are not part of this plan: do not write them up as interventions and never
+      describe any option as "not recommended".
     - Justify each recommendation with the strongest supporting and challenging arguments above, and cite the medical
       knowledge as [REF-X] only where it is relevant. Never invent references.
     - Address every clinician feedback item and instruction listed above.

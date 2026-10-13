@@ -126,7 +126,7 @@ def test_a_changed_assessment_always_regenerates_the_whole_plan(fake_llm):
     fake_llm.strategy_response = {"strategy": "targeted_revision", "sections": ["summary"], "rationale": "small"}
     plan = plan_revision_strategy(state, delta, [{"op": "reject", "stance": "support"}], [], dict(SECTION_TITLES))
     assert plan["strategy"] == "full_regeneration" and plan["decided_by"] == "rules"
-    assert 'the assessment of O1 changed from "Clinical judgment required" to "Not recommended at this time"' in plan["rationale"]
+    assert 'the assessment of O1 changed from "Clinical judgment required" to "Set aside"' in plan["rationale"]
     assert fake_llm.count("You are deciding how to update a care plan") == 0  # no choice left to reason about
 
 

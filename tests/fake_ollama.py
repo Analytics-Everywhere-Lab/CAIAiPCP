@@ -20,7 +20,7 @@ The patient lives alone after a recent fall and wishes to remain at home. The pl
 Recommended: grab bars and rails reduce fall risk [REF-1].
 
 ### Option 2: Transition to assisted living
-Not recommended at this time.
+Clinical judgment required: keep as a fallback if falls continue.
 
 ## Implementation Plan
 | Action | Responsible | Timeline | Notes |
@@ -102,7 +102,7 @@ class FakeOllama:
                             "refs": [1], "note": f"{'Central' if relevance == 'high' else 'Secondary'} point for this patient."})
             seen.setdefault(key, arg_id)
             if at_home and first_support and stance == "challenge" and "costly" in lowered and not rebuttals:
-                rebuttals.append({"from": first_support, "to": arg_id,
+                rebuttals.append({"from": first_support, "to": arg_id, "strength": "full",
                                   "reason": "Grab bars and rails are low-cost changes."})
         summary = ("Strong fit: it targets her falls risk at home, as she wishes; cost is minor." if at_home
                    else "Weak fit: relocation conflicts with her wish to stay at home.")
@@ -116,6 +116,15 @@ class FakeOllama:
             return "Moderate"
         if "generate 3-5 specific search queries" in prompt:
             return "elderly fall prevention home\ngeriatric mild cognitive impairment living alone"
+        if "Then screen each candidate as a careful clinician would" in prompt:
+            return dump({"options": [
+                {"option": "Home safety assessment and modification", "fit": "strong",
+                 "why": "Targets her falls risk and keeps her at home, as she wishes."},
+                {"option": "Transition to assisted living", "fit": "possible",
+                 "why": "A fallback if falls continue despite home changes."},
+                {"option": "Immediate nursing home admission", "fit": "poor",
+                 "why": "Conflicts with her wish to stay at home; her needs do not require it."},
+            ]})
         if "generate 1-2 specific handling options" in prompt:
             return "Option 1: Home safety assessment and modification\nOption 2: Transition to assisted living"
         if "structured analysis in JSON format" in prompt:

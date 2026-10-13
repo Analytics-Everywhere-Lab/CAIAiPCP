@@ -37,8 +37,7 @@ TIER_COLORS = {
     "recommended": "#166534",
     "conditional": "#3f6212",
     "uncertain": "#92400e",
-    "deferred": "#9a3412",
-    "not_recommended": "#991b1b",
+    "set_aside": "#64748b",
 }
 
 PAGE_MARGIN = 0.75 * inch
@@ -280,8 +279,15 @@ def _patient_box(plan: Dict[str, Any], styles, width: float) -> Table:
     return box
 
 
+def _plan_options(plan: Dict[str, Any]):
+    """(options in the plan, options set aside), each ranked."""
+    ranked = sorted(plan.get("options") or [], key=lambda row: row.get("rank", 0))
+    return ([row for row in ranked if row.get("tier") != "set_aside"],
+            [row for row in ranked if row.get("tier") == "set_aside"])
+
+
 def _decision_table(plan: Dict[str, Any], styles, width: float) -> Optional[Table]:
-    options = sorted(plan.get("options") or [], key=lambda row: row.get("rank", 0))
+    options, _ = _plan_options(plan)
     if not options:
         return None
     header = ["Care option", "Assessment", "Strength", "Leading support", "Leading concern"]
@@ -340,14 +346,25 @@ def render_care_plan_pdf(plan: Dict[str, Any]) -> bytes:
 
     number = 0
     decision = _decision_table(plan, styles, width)
-    if decision is not None:
+    _, set_aside = _plan_options(plan)
+    if decision is not None or set_aside:
         number += 1
         story += _section_heading(number, "Decision Summary", styles, width)
         story.append(Paragraph(
             "Each care option was weighed by a quantitative bipolar argumentation framework: "
             "supporting and challenging arguments from the care team, verified against the medical "
             "knowledge base and contested by the reviewing clinician.", styles["small"]))
-        story.append(decision)
+        if decision is not None:
+            story.append(decision)
+        else:
+            story.append(Paragraph("No option is supported strongly enough to include in this plan.", styles["small"]))
+        if set_aside:
+            names = "; ".join(_inline(row["option"]) for row in set_aside)
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(
+                f"<b>Set aside after clinician review:</b> {names}. With the reviewing clinician's changes, the "
+                f"weighed arguments no longer support {'it' if len(set_aside) == 1 else 'them'} for this patient, so "
+                f"{'it is' if len(set_aside) == 1 else 'they are'} not part of this plan.", styles["small"]))
 
     for section in plan.get("sections") or []:
         number += 1

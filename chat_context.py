@@ -80,7 +80,8 @@ def compact_arguments(state: Dict[str, Any], max_tokens: int) -> str:
         option_lines.append(f"{option_id(index)}|{row.get('tier_label', 'not yet weighed')}|{strength}|{clip_text(option, 160)}")
     arguments = state.get("arguments") or []
     header = ("ARGUMENTS (id|option|stance|role|validity|relevance|strength|status|text; stance: + supports, "
-              "- challenges, >A2 targets A2, xA2 answers A2, =A2 repeats A2; relevance H/M/L for this patient)")
+              "- challenges, >A2 targets A2, xA2 answers A2, ~A2 partly answers A2, =A2 repeats A2; relevance H/M/L "
+              "for this patient; options set aside are not part of the plan)")
 
     def render(limit: int) -> str:
         rows = [header]
@@ -90,6 +91,7 @@ def compact_arguments(state: Dict[str, Any], max_tokens: int) -> str:
             if arg.target_arg_id:
                 stance += f">{arg.target_arg_id}"
             stance += "".join(f"x{answered}" for answered in arg.rebuts or [])
+            stance += "".join(f"~{answered}" for answered in arg.partly_rebuts or [])
             if arg.same_as:
                 stance += f"={arg.same_as}"
             validity = f"{arg.validity_score:.2f}" if arg.validity_score is not None else "-"

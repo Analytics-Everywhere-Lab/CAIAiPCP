@@ -18,7 +18,15 @@ together as a group:
   not a second full vote.
 - rebuttal: when an argument answers an opposing one (a support showing that a
   concern is manageable), it also attacks that argument, so answered concerns
-  weigh less.
+  weigh less; a partial answer attacks at half weight.
+
+Options are proposed only after the generator screens them for fit with the
+patient, so every option starts as one the system would recommend, and the
+system never rejects its own proposal: left uncontested, a weak option stays at
+"Clinical judgment required". Only when the clinician's contest (a removed,
+edited or added argument, or plan feedback) leaves an option weak is it set
+aside: it stays visible and contestable on the argument board but is left out
+of the plan, rather than being presented as "not recommended".
 
 Human contestation enters the framework directly: rejected arguments leave the
 graph, edited ones are re-verified, and clinician-authored arguments blend the
@@ -43,9 +51,10 @@ TIERS = [
     (0.70, "recommended", "Recommended"),
     (0.55, "conditional", "Recommended with conditions"),
     (0.45, "uncertain", "Clinical judgment required"),
-    (0.30, "deferred", "Not recommended at this time"),
-    (0.00, "not_recommended", "Not recommended"),
+    (0.00, "set_aside", "Set aside"),
 ]
+SET_ASIDE = "set_aside"
+PARTIAL_REBUTTAL_WEIGHT = 0.5
 
 
 TIER_LABELS = {key: label for _, key, label in TIERS}
@@ -56,6 +65,20 @@ def tier_for(strength: float) -> Dict[str, str]:
         if strength >= bound:
             return {"tier": key, "tier_label": label}
     return {"tier": TIERS[-1][1], "tier_label": TIERS[-1][2]}
+
+
+def clinician_contested(arguments: List[Argument]) -> bool:
+    """True when the clinician changed these arguments: added, edited or removed one, or gave feedback on them."""
+    return any(is_human_authored(arg) or arg.human_status in ("added", "edited", "rejected") for arg in arguments)
+
+
+def option_tier(strength: float, contested: bool) -> Dict[str, str]:
+    """Tier of an option. Only the clinician's contest can set aside an option the system proposed itself:
+    left uncontested, a weak option stays for clinical judgment rather than being rejected by its own proposer."""
+    tier = tier_for(strength)
+    if tier["tier"] == SET_ASIDE and not contested:
+        return {"tier": "uncertain", "tier_label": TIER_LABELS["uncertain"]}
+    return tier
 
 
 def argument_weighting(arg: Argument, duplicate: bool = False) -> Tuple[float, float]:
@@ -105,7 +128,7 @@ def propagate(nodes: Dict[str, Dict[str, Any]], edges: List[Dict[str, str]],
         updated = {}
         for node_id, node in nodes.items():
             energy = sum(
-                strength[edge["from"]] * (1.0 if edge["relation"] == "support" else -1.0)
+                strength[edge["from"]] * edge.get("weight", 1.0) * (1.0 if edge["relation"] == "support" else -1.0)
                 for edge in incoming[node_id]
             )
             updated[node_id] = _quadratic_energy(node["base"], energy)
@@ -142,9 +165,14 @@ def build_graph(options: List[str], arguments: List[Argument]):
         })
     # Rebuttals found by the group verification: answering an argument weakens it.
     for arg in active:
-        for answered in arg.rebuts or []:
+        answers = [(target, 1.0) for target in arg.rebuts or []]
+        answers += [(target, PARTIAL_REBUTTAL_WEIGHT) for target in arg.partly_rebuts or []]
+        for answered, weight in answers:
             if arg.arg_id in nodes and answered in nodes and answered != arg.arg_id:
-                edges.append({"from": arg.arg_id, "to": answered, "relation": "attack", "kind": "rebuttal"})
+                edge = {"from": arg.arg_id, "to": answered, "relation": "attack", "kind": "rebuttal"}
+                if weight != 1.0:
+                    edge["weight"] = weight
+                edges.append(edge)
 
     def option_of(arg_id: str) -> Optional[str]:
         seen = set()
@@ -208,6 +236,8 @@ def evaluate_qbaf(options: List[str], arguments: List[Argument]) -> Dict[str, An
         option_strength = strength[oid]
         decisiveness = abs(option_strength - 0.5) * 2.0
         grounding = _grounding([arg for arg, _ in attached], active_ids)
+        contested = clinician_contested([arg for arg in arguments if arg.parent_option == option])
+        tier = option_tier(option_strength, contested)
         option_rows.append({
             "option_id": oid,
             "option": option,
@@ -218,7 +248,9 @@ def evaluate_qbaf(options: List[str], arguments: List[Argument]) -> Dict[str, An
             "confidence": round(grounding * (0.5 + 0.5 * decisiveness), 4),
             "decisiveness": round(decisiveness, 4),
             "grounding": round(grounding, 4),
-            **tier_for(option_strength),
+            **tier,
+            "in_plan": tier["tier"] != SET_ASIDE,
+            "contested": contested,
             "support_count": sum(1 for arg, _ in attached if arg.argument_type == "support"),
             "attack_count": sum(1 for arg, _ in attached if arg.argument_type == "attack"),
             "top_supports": [_driver(arg, row) for arg, row in supports[:3]],
