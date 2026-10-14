@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useElementWidth } from '../hooks'
+import { useElementWidth, usePersistentState } from '../hooks'
 import { layoutCards, rectsWithin, resolveRange, selectionAnchor } from './annotations'
+import { CitedText, ReferenceItem, citationMarkdown, clipCited, ieeeText } from './Citations'
 import {
-  Check, CheckCircle, ChevronDown, Collapse, Download, Edit, Expand, Note, NotePlus, Printer, Refresh, Trash, X
+  Check, CheckCircle, ChevronDown, Collapse, Download, Edit, Expand, Eye, EyeOff, Note, NotePlus, Printer, Refresh, Trash, X
 } from './Icons'
 
 export const TIER_CLASS = {
@@ -35,11 +36,6 @@ function stripRoleTag(content) {
   return content?.startsWith('[') && content.indexOf(']') > 0 ? content.slice(content.indexOf(']') + 1).trim() : content
 }
 
-// [REF-3] -> a link to the reference list entry.
-function withCitationLinks(markdown) {
-  return (markdown || '').replace(/\[REF-(\d+)\]/g, '[[REF-$1]](#ref-$1)')
-}
-
 function RevisionNote({ plan, titles }) {
   return (
     <details className="revision-note" open>
@@ -61,7 +57,7 @@ function RevisionNote({ plan, titles }) {
         <div className="revision-note-row">
           Changes to the argument graph:
           <ul className="revision-ops">
-            {(plan.feedback_ops?.length ? plan.feedback_ops : plan.contested_ops).map((line, i) => <li key={i}>{line.replace(/^- /, '')}</li>)}
+            {(plan.feedback_ops?.length ? plan.feedback_ops : plan.contested_ops).map((line, i) => <li key={i}>{ieeeText(line.replace(/^- /, ''))}</li>)}
           </ul>
         </div>
       )}
@@ -140,6 +136,7 @@ export default function CarePlanDocument({
   const [layoutTick, setLayoutTick] = useState(0)
   const [listOpen, setListOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [notesHidden, setNotesHidden] = usePersistentState('caiaipcp:notes-hidden', false)
 
   const sections = plan.sections || []
   const titles = { [DECISION_ID]: 'Decision Summary', ...Object.fromEntries(sections.map(s => [s.id, s.title])) }
@@ -149,8 +146,12 @@ export default function CarePlanDocument({
   const rankedOptions = [...(plan.options || [])].sort((a, b) => a.rank - b.rank)
   const planOptions = rankedOptions.filter(row => row.tier !== 'set_aside')
   const setAside = rankedOptions.filter(row => row.tier === 'set_aside')
+  const refIds = new Set((plan.reference_list || []).map(ref => ref.id))
   const visibleNotes = isLatest ? notes : []
   const savedNotes = notes.filter(n => !n.draft)
+  // The notes (margin cards, highlights and markers) appear with the first note and can be hidden.
+  const showNotes = visibleNotes.length > 0 && !notesHidden
+  const railShown = railMode && showNotes
   const numbers = Object.fromEntries(notes.map((n, i) => [n.localId, i + 1]))
   const noteLabel = (note) => (note.kind === 'general' ? 'Whole plan' : titles[note.section_id] || 'Care plan')
   const totalPending = savedNotes.length + pendingChanges
@@ -196,7 +197,7 @@ export default function CarePlanDocument({
       next[note.localId] = { rects, top, bottom, order }
     })
     setAnchors(next)
-  }, [notes, plan, collapsed, railMode, layoutTick, isLatest]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [notes, plan, collapsed, railMode, railShown, layoutTick, isLatest]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Measure note cards so they can be stacked without overlapping.
   useLayoutEffect(() => {
@@ -252,6 +253,7 @@ export default function CarePlanDocument({
 
   const startNote = (note) => {
     settleEditing()
+    setNotesHidden(false)
     const id = onCreateNote({ text: '', draft: true, ...note })
     setEditingId(id)
     setActiveId(id)
@@ -307,6 +309,7 @@ export default function CarePlanDocument({
   }
 
   const focusNote = (id) => {
+    setNotesHidden(false)
     setActiveId(id)
     setFlashId(id)
     setTimeout(() => setFlashId(current => (current === id ? null : current)), 1200)
@@ -393,6 +396,14 @@ export default function CarePlanDocument({
             : <span className="status-chip draft">Draft for clinical review</span>}
         </div>
         <div className="plan-toolbar-group">
+          {visibleNotes.length > 0 && (
+            <button type="button" className={`btn ghost sm notes-toggle ${notesHidden ? '' : 'is-on'}`}
+              onClick={() => setNotesHidden(hidden => !hidden)} aria-pressed={!notesHidden}
+              title={notesHidden ? 'Show your feedback notes beside the plan' : 'Hide the notes to read the plan on its own'}>
+              {notesHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+              {notesHidden ? `Show notes (${savedNotes.length})` : 'Hide notes'}
+            </button>
+          )}
           <button type="button" className="icon-btn" onClick={toggleAll} title={allCollapsed ? 'Expand all sections' : 'Collapse all sections'}>
             {allCollapsed ? <Expand /> : <Collapse />}
           </button>
@@ -418,10 +429,10 @@ export default function CarePlanDocument({
 
       <div className="plan-canvas" ref={canvasRef} onMouseUp={updateSelection} onKeyUp={updateSelection}
         onTouchEnd={() => setTimeout(updateSelection, 50)}>
-        <div className={`plan-canvas-inner ${railMode ? 'with-rail' : ''}`} ref={innerRef}>
+        <div className={`plan-canvas-inner ${railShown ? 'with-rail' : ''}`} ref={innerRef}>
           <div className="plan-paper" ref={paperRef}>
             <div className="annotation-layer" aria-hidden="true">
-              {visibleNotes.map(note => (anchors[note.localId]?.rects || []).map((rect, i) => (
+              {showNotes && visibleNotes.map(note => (anchors[note.localId]?.rects || []).map((rect, i) => (
                 <span key={`${note.localId}-${i}`} data-note={i === 0 ? note.localId : undefined}
                   className={`note-highlight ${note.draft ? 'is-draft' : ''} ${activeId === note.localId ? 'is-active' : ''} ${flashId === note.localId ? 'is-flash' : ''}`}
                   style={{ top: rect.top - 1, left: rect.left - 1, width: rect.width + 2, height: rect.height + 2 }} />
@@ -469,17 +480,19 @@ export default function CarePlanDocument({
                           )}
                           {planOptions.map(row => (
                             <tr key={row.option_id}>
-                              <td className="option-cell">{row.option}</td>
+                              <td className="option-cell"><CitedText text={row.option} refIds={refIds} /></td>
                               <td><span className={`tier-pill ${TIER_CLASS[row.tier]}`}>{row.tier_label}</span></td>
                               <td className="strength-cell">
                                 <span className="meter small"><span style={{ width: `${Math.round(row.strength * 100)}%` }} /></span>
                                 {row.strength.toFixed(2)}
                               </td>
-                              <td title={stripRoleTag(row.top_supports?.[0]?.content || '')}>
-                                {row.top_supports?.[0] ? clip(stripRoleTag(row.top_supports[0].content), 140) : '—'}
+                              <td title={ieeeText(stripRoleTag(row.top_supports?.[0]?.content || ''))}>
+                                {row.top_supports?.[0]
+                                  ? <CitedText text={clipCited(stripRoleTag(row.top_supports[0].content), 140)} refIds={refIds} /> : '—'}
                               </td>
-                              <td title={stripRoleTag(row.top_attacks?.[0]?.content || '')}>
-                                {row.top_attacks?.[0] ? clip(stripRoleTag(row.top_attacks[0].content), 140) : '—'}
+                              <td title={ieeeText(stripRoleTag(row.top_attacks?.[0]?.content || ''))}>
+                                {row.top_attacks?.[0]
+                                  ? <CitedText text={clipCited(stripRoleTag(row.top_attacks[0].content), 140)} refIds={refIds} /> : '—'}
                               </td>
                             </tr>
                           ))}
@@ -488,7 +501,7 @@ export default function CarePlanDocument({
                     </div>
                     {setAside.length > 0 && (
                       <p className="set-aside-note">
-                        <strong>Set aside after your review:</strong> {setAside.map(row => row.option).join('; ')}. With your
+                        <strong>Set aside after your review:</strong> {ieeeText(setAside.map(row => row.option).join('; '))}. With your
                         changes the weighed arguments no longer support {setAside.length === 1 ? 'it' : 'them'} for this patient, so {setAside.length === 1 ? 'it is' : 'they are'} not
                         part of this plan. Restore or add arguments on the argument board to bring {setAside.length === 1 ? 'it' : 'them'} back.
                       </p>
@@ -504,7 +517,7 @@ export default function CarePlanDocument({
                     changed.has(section.id) ? <span className="badge badge-updated">Updated in v{plan.version}</span> : null)}
                   {!collapsed.has(section.id) && (
                     <div className="markdown-content plan-markdown" data-anchor-root={section.id}>
-                      <Markdown remarkPlugins={[remarkGfm]}>{withCitationLinks(section.content)}</Markdown>
+                      <Markdown remarkPlugins={[remarkGfm]}>{citationMarkdown(section.content, refIds)}</Markdown>
                     </div>
                   )}
                 </section>
@@ -532,22 +545,7 @@ export default function CarePlanDocument({
                 <section className="plan-section references">
                   <header className="plan-section-header static"><h2>References</h2></header>
                   <ol className="reference-list">
-                    {plan.reference_list.map(ref => {
-                      // The citation ends with its DOI or PMID; that identifier is the link to the source.
-                      const ident = ref.doi ? `doi:${ref.doi}` : ref.pmid ? `PMID: ${ref.pmid}` : ''
-                      const citation = ref.citation || ref.title
-                      const text = ident && citation.endsWith(ident) ? citation.slice(0, -ident.length).trimEnd() : citation
-                      return (
-                        <li key={ref.id} id={`ref-${ref.id}`}>
-                          <span className="ref-id">REF-{ref.id}</span>
-                          {ref.kind && <span className="ref-kind">{ref.kind}</span>}
-                          <span className="ref-citation">{text}</span>
-                          {ref.url && (
-                            <> <a className="ref-link" href={ref.url} target="_blank" rel="noopener noreferrer">{ident || 'View source'}</a></>
-                          )}
-                        </li>
-                      )
-                    })}
+                    {plan.reference_list.map(ref => <ReferenceItem key={ref.id} reference={ref} />)}
                   </ol>
                 </section>
               )}
@@ -568,7 +566,7 @@ export default function CarePlanDocument({
             </article>
 
             <div className="annotation-badges">
-              {visibleNotes.map(note => {
+              {showNotes && visibleNotes.map(note => {
                 const rects = anchors[note.localId]?.rects || []
                 const last = rects[rects.length - 1]
                 if (!last || note.draft) return null
@@ -584,14 +582,8 @@ export default function CarePlanDocument({
             </div>
           </div>
 
-          {railMode && isLatest && (
+          {railShown && (
             <aside className="notes-rail" style={{ minHeight: railHeight }} aria-label="Feedback notes">
-              {visibleNotes.length === 0 && (
-                <div className="rail-empty">
-                  <NotePlus size={18} />
-                  <p>Select any text in the plan and choose <strong>Add feedback</strong>. Your notes appear here, next to the text they are about.</p>
-                </div>
-              )}
               {visibleNotes.filter(note => anchors[note.localId]).map(note => renderCard(note, { top: positions[note.localId] }))}
             </aside>
           )}

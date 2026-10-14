@@ -146,8 +146,9 @@ class FakeOllama:
         if "Assess this care option for this patient from your perspective" in prompt:
             role = re.search(r"As a ([A-Za-z ]+?) named", prompt) or re.search(r"You are a ([A-Za-z ]+?) named", prompt)
             option = "home" if "Home safety" in prompt.split("Care Option Being Evaluated:")[-1] else "facility"
+            cites = " [REF-1][REF-9]" if option == "home" else ""
             return (f"Support: The {option} option addresses the falls risk from a "
-                    f"{role.group(1) if role else 'clinical'} perspective.\n"
+                    f"{role.group(1) if role else 'clinical'} perspective{cites}.\n"
                     f"Challenge: The {option} option may be costly and disruptive for the patient.")
         if "verification panel for an interdisciplinary aging-in-place care plan" in prompt:
             return dump(self.verify_group(prompt))

@@ -11,7 +11,7 @@ import ReasoningTrace from './components/ReasoningTrace'
 import SettingsDialog from './components/SettingsDialog'
 import Welcome from './components/Welcome'
 import {
-  Alert, BrandMark, Brain, Chat, Check, ChevronLeft, ChevronRight, FileText, Moon, Scale, Settings, Sun, User, X
+  Alert, BrandMark, Brain, Chat, Check, FileText, Moon, PanelLeftClose, PanelLeftOpen, Scale, Settings, Sun, User, X
 } from './components/Icons'
 
 const STEPS = ['Patient', 'Argument review', 'Care plan', 'Approved']
@@ -54,6 +54,7 @@ function App() {
   const [argumentsData, setArgumentsData] = useState([])
   const [qbafArgs, setQbafArgs] = useState({})
   const [optionReviews, setOptionReviews] = useState({})
+  const [references, setReferences] = useState([])
   const [pendingChanges, setPendingChanges] = useState(0)
 
   // Care plan versions and feedback notes
@@ -91,6 +92,7 @@ function App() {
     if (d.arguments) setArgumentsData(d.arguments)
     if (d.qbaf_arguments) setQbafArgs(d.qbaf_arguments)
     if (d.option_reviews) setOptionReviews(d.option_reviews)
+    if (d.references) setReferences(d.references)
     if (typeof d.pending_changes === 'number') setPendingChanges(d.pending_changes)
     if (d.versions) {
       setVersions(d.versions)
@@ -209,6 +211,7 @@ function App() {
     setArgumentsData([])
     setQbafArgs({})
     setOptionReviews({})
+    setReferences([])
     setPendingChanges(0)
     setNotes([])
     setRevisionInfo(null)
@@ -367,13 +370,21 @@ function App() {
     { id: 'memory', label: 'Learned memory', icon: <Brain size={16} />, count: 0 }
   ]
 
+  // Folds the patient and assistant panels into a narrow rail on the left, giving the workspace the room.
+  const collapseLeft = (
+    <button type="button" className="icon-btn panel-collapse-left" onClick={() => setSidebarCollapsed(true)}
+      title="Collapse to the left" aria-label="Collapse side panel to the left">
+      <PanelLeftClose size={17} />
+    </button>
+  )
+
   return (
     <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <header className="topbar">
         <div className="topbar-left">
           <button type="button" className="icon-btn sidebar-toggle" onClick={() => setSidebarCollapsed(c => !c)}
             title={sidebarCollapsed ? 'Show patient and assistant' : 'Hide patient and assistant'} aria-label="Toggle side panel">
-            {sidebarCollapsed ? <ChevronRight /> : <ChevronLeft />}
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
           <div className="brand">
             <BrandMark size={36} />
@@ -425,6 +436,9 @@ function App() {
         <aside className="sidebar" aria-label="Patient and assistant">
           {sidebarCollapsed ? (
             <div className="sidebar-rail">
+              <button type="button" className="rail-btn rail-expand" onClick={() => setSidebarCollapsed(false)}
+                title="Expand patient and assistant" aria-label="Expand side panel"><PanelLeftOpen size={18} /></button>
+              <span className="rail-divider" aria-hidden="true" />
               <button type="button" className="rail-btn" onClick={() => setSidebarCollapsed(false)} title="Patient"><User /></button>
               <button type="button" className="rail-btn" onClick={() => setSidebarCollapsed(false)} title="Care assistant">
                 <Chat />{messages.length > 0 && <span className="rail-dot" />}
@@ -432,12 +446,13 @@ function App() {
             </div>
           ) : (
             <>
-              <Panel id="patient" title="Patient" icon={<User size={16} />}
+              <Panel id="patient" title="Patient" icon={<User size={16} />} tools={collapseLeft}
                 subtitle={hasStarted ? 'Current case' : 'Describe the person'}>
                 <PatientPanel patientInfo={patientInfo} setPatientInfo={setPatientInfo} severity={severity} setSeverity={setSeverity}
                   hasStarted={hasStarted} loading={loading} onStart={startGeneration} onEdit={() => setHasStarted(false)} />
               </Panel>
-              <Panel id="assistant" title="Care assistant" icon={<Chat size={16} />} className="panel-chat" bodyClassName="panel-body-chat"
+              <Panel id="assistant" title="Care assistant" icon={<Chat size={16} />} tools={collapseLeft}
+                className="panel-chat" bodyClassName="panel-body-chat"
                 subtitle={latestPlan ? 'Knows every argument and the plan' : 'Available once the plan is ready'}>
                 <ChatPanel messages={messages} streamingReply={streamingReply} errorMessage={errorMessage}
                   planReady={!!latestPlan} input={chatInput} setInput={setChatInput}
@@ -480,6 +495,7 @@ function App() {
                     qbafOptions={latestPlan?.options}
                     qbafArgs={qbafArgs}
                     reviews={optionReviews}
+                    references={references}
                     phase={phase}
                     loading={loading}
                     pendingChanges={pendingChanges}

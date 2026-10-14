@@ -161,8 +161,10 @@ Each case draws on two kinds of knowledge, kept apart in every prompt:
 - **Published evidence** (cited): peer-reviewed papers, reviews and guidelines found on
   [Europe PMC](https://europepmc.org) (which covers PubMed/MEDLINE) for the case's search queries and for each
   care option. Practice guidelines and systematic reviews rank first; case reports, letters, editorials and
-  retracted work are excluded. These are the only sources the plan may cite as `[REF-n]`, and the References
-  section (and the PDF) lists each as a citation with its DOI or PubMed link.
+  retracted work are excluded. These are the only sources the options, arguments and plan may cite. Citations
+  are shown IEEE-style as `[n]` (stored as `[REF-n]`) and link to a reference list: the plan's References section
+  (also in the PDF) and, on the argument page, a References box under each option. Each entry is a citation with
+  its DOI or PubMed link.
 - **Similar case records** (background only): records of other patients from the local vector database. The care
   team, the verification panel and the writer read them, unnumbered, with the instruction never to cite, quote or
   describe them. They stay on the server: they are never listed as references, previewed, sent to the browser,
@@ -200,8 +202,11 @@ on this machine (`localhost` / `127.0.0.1`). To serve the frontend from another 
 ## Interface
 
 - Light and dark themes (pastel white and blue), following the system setting until you pick one.
-- Collapsible modules: the side panel (patient and assistant), each panel, each plan section, each team role on
-  the argument board, completed reasoning steps, and memory details. Choices are remembered in the browser.
+- Collapsible modules: the patient and assistant panels fold to the left into a narrow rail (the button in either
+  panel's header, or in the top bar), and each panel, plan section, team role on the argument board, completed
+  reasoning step and memory detail collapses on its own. Choices are remembered in the browser.
+- Feedback notes: the notes margin appears with your first note, and **Hide notes** / **Show notes** in the plan
+  toolbar hides the margin, highlights and markers so the plan reads on its own at full width.
 - Responsive layout: on narrow screens the panels stack, the plan toolbar and feedback bar stay in reach, and
   notes open below the text they are about.
 - Animations are kept subtle and switch off when the system asks for reduced motion.

@@ -50,8 +50,10 @@ def test_options_set_aside_are_noted_not_ranked():
 
 def test_inline_markup_is_escaped_and_converted():
     assert _inline("a <b> & **bold** *it* [REF-2] [link](http://x)") == (
-        'a &lt;b&gt; &amp; <b>bold</b> <i>it</i> <font color="#4f46e5">[REF-2]</font> link'
+        'a &lt;b&gt; &amp; <b>bold</b> <i>it</i> <font color="#4f46e5">[2]</font> link'
     )
+    # IEEE style: adjacent citations are separated by a comma.
+    assert _inline("[REF-1][REF-3]") == '<font color="#4f46e5">[1]</font>, <font color="#4f46e5">[3]</font>'
     assert _inline("x ≥ 3 → y") == "x &gt;= 3 -&gt; y"  # escaped markup, drawn as ">=" and "->"
 
 
