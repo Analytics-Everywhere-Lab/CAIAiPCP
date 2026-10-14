@@ -20,7 +20,7 @@ from arguments import (
     record_human_op,
     resolve_option,
 )
-from care_plan_document import now_iso
+from care_plan_document import now_iso, reference_list
 from chat_context import ChatMemory
 from graph import create_care_plan_graph
 from env_config import CHAT_MAX_TOKENS
@@ -189,6 +189,9 @@ def client_payload(state: Dict[str, Any]) -> Dict[str, Any]:
         "qbaf_arguments": (state.get("qbaf") or {}).get("arguments", {}),
         # The verification panel's judgement of each option's arguments as a group.
         "option_reviews": state.get("option_reviews") or {},
+        # Published sources the options and arguments may cite, as citations (never their text).
+        "references": reference_list(state.get("document_references") or [],
+                                     {ref["id"] for ref in state.get("document_references") or []}),
     }
 
 
@@ -232,7 +235,7 @@ def _node_events(session: Dict[str, Any], node_name: str, node_state: Dict[str, 
         return [
             {"type": "message", "node": "human_review", "content": _review_note(node_state)},
             {"type": "review_needed", "options": payload["options"], "arguments": payload["arguments"],
-             "team": payload["team"]},
+             "team": payload["team"], "references": payload["references"]},
         ]
     if node_name == "revision_planning":
         plan = node_state.get("revision_plan") or {}

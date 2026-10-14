@@ -140,6 +140,10 @@ _CITATION = re.compile(r"\s?\[REF-(\d+)\]")
 _PLACEHOLDER_CITATION = re.compile(r"\s?\[REF-(?!\d)[^\]]{0,12}\]")
 
 
+def _source_ids(state: GraphState) -> Set[int]:
+    return {ref["id"] for ref in state.get("document_references") or []}
+
+
 def _clean_citations(text: str, valid_ids: Set[int]) -> str:
     """Keep only citations of the case's published sources: "[REF-1, REF-2]" becomes "[REF-1][REF-2]",
     and a number that no source has, or a placeholder such as [REF-X], is dropped."""
@@ -292,7 +296,9 @@ def care_plan_generator(state: GraphState) -> GraphState:
             "Regular Health Monitoring and Care Coordination",
         ]
 
-    state["handling_options"] = options
+    # Citations in an option may only point at published sources the case retrieved.
+    source_ids = _source_ids(state)
+    state["handling_options"] = [_clean_citations(option, source_ids).strip() for option in options]
     state["current_step"] = "argument_generation"
     print("Options generated: ", options)
     return state
@@ -560,6 +566,9 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
 
     memory_arguments = _instantiate_memory_arguments(state, memory_records)
     arguments.extend(memory_arguments)
+    source_ids = _source_ids(state)
+    for arg in arguments:
+        arg.content = _clean_citations(arg.content, source_ids)
 
     state["arguments"] = arguments
     ensure_argument_ids(state)
@@ -1217,11 +1226,15 @@ def care_plan_reviser(state: GraphState) -> GraphState:
             sections = [{"id": "summary", "title": SECTION_TITLES["summary"],
                          "content": "The care plan could not be generated. Please regenerate it."}]
 
-    source_ids = {ref["id"] for ref in state.get("document_references") or []}
+    source_ids = _source_ids(state)
     sections = [{**section, "content": _clean_citations(section.get("content", ""), source_ids)} for section in sections]
     response = sections_to_markdown(sections)
-    cited_refs = re.findall(r"\[REF-(\d+)\]", response)
-    cited_doc_ids = set(int(ref) for ref in cited_refs)
+    # The decision table shows the option names and their leading arguments, so their citations count too.
+    shown = [response] + [
+        f"{row['option']} {' '.join(d.get('content', '') for d in row.get('top_supports', [])[:1] + row.get('top_attacks', [])[:1])}"
+        for row in qbaf.get("options", [])
+    ]
+    cited_doc_ids = {int(ref) for text in shown for ref in re.findall(r"\[REF-(\d+)\]", text)} & source_ids
 
     # Update document references with usage information
     if "document_references" in state:

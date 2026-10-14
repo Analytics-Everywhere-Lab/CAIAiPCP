@@ -3,6 +3,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useElementWidth } from '../hooks'
 import { layoutCards, rectsWithin, resolveRange, selectionAnchor } from './annotations'
+import { CitedText, ReferenceItem, citationMarkdown, clipCited, ieeeText } from './Citations'
 import {
   Check, CheckCircle, ChevronDown, Collapse, Download, Edit, Expand, Note, NotePlus, Printer, Refresh, Trash, X
 } from './Icons'
@@ -35,11 +36,6 @@ function stripRoleTag(content) {
   return content?.startsWith('[') && content.indexOf(']') > 0 ? content.slice(content.indexOf(']') + 1).trim() : content
 }
 
-// [REF-3] -> a link to the reference list entry.
-function withCitationLinks(markdown) {
-  return (markdown || '').replace(/\[REF-(\d+)\]/g, '[[REF-$1]](#ref-$1)')
-}
-
 function RevisionNote({ plan, titles }) {
   return (
     <details className="revision-note" open>
@@ -61,7 +57,7 @@ function RevisionNote({ plan, titles }) {
         <div className="revision-note-row">
           Changes to the argument graph:
           <ul className="revision-ops">
-            {(plan.feedback_ops?.length ? plan.feedback_ops : plan.contested_ops).map((line, i) => <li key={i}>{line.replace(/^- /, '')}</li>)}
+            {(plan.feedback_ops?.length ? plan.feedback_ops : plan.contested_ops).map((line, i) => <li key={i}>{ieeeText(line.replace(/^- /, ''))}</li>)}
           </ul>
         </div>
       )}
@@ -149,6 +145,7 @@ export default function CarePlanDocument({
   const rankedOptions = [...(plan.options || [])].sort((a, b) => a.rank - b.rank)
   const planOptions = rankedOptions.filter(row => row.tier !== 'set_aside')
   const setAside = rankedOptions.filter(row => row.tier === 'set_aside')
+  const refIds = new Set((plan.reference_list || []).map(ref => ref.id))
   const visibleNotes = isLatest ? notes : []
   const savedNotes = notes.filter(n => !n.draft)
   const numbers = Object.fromEntries(notes.map((n, i) => [n.localId, i + 1]))
@@ -469,17 +466,19 @@ export default function CarePlanDocument({
                           )}
                           {planOptions.map(row => (
                             <tr key={row.option_id}>
-                              <td className="option-cell">{row.option}</td>
+                              <td className="option-cell"><CitedText text={row.option} refIds={refIds} /></td>
                               <td><span className={`tier-pill ${TIER_CLASS[row.tier]}`}>{row.tier_label}</span></td>
                               <td className="strength-cell">
                                 <span className="meter small"><span style={{ width: `${Math.round(row.strength * 100)}%` }} /></span>
                                 {row.strength.toFixed(2)}
                               </td>
-                              <td title={stripRoleTag(row.top_supports?.[0]?.content || '')}>
-                                {row.top_supports?.[0] ? clip(stripRoleTag(row.top_supports[0].content), 140) : '—'}
+                              <td title={ieeeText(stripRoleTag(row.top_supports?.[0]?.content || ''))}>
+                                {row.top_supports?.[0]
+                                  ? <CitedText text={clipCited(stripRoleTag(row.top_supports[0].content), 140)} refIds={refIds} /> : '—'}
                               </td>
-                              <td title={stripRoleTag(row.top_attacks?.[0]?.content || '')}>
-                                {row.top_attacks?.[0] ? clip(stripRoleTag(row.top_attacks[0].content), 140) : '—'}
+                              <td title={ieeeText(stripRoleTag(row.top_attacks?.[0]?.content || ''))}>
+                                {row.top_attacks?.[0]
+                                  ? <CitedText text={clipCited(stripRoleTag(row.top_attacks[0].content), 140)} refIds={refIds} /> : '—'}
                               </td>
                             </tr>
                           ))}
@@ -488,7 +487,7 @@ export default function CarePlanDocument({
                     </div>
                     {setAside.length > 0 && (
                       <p className="set-aside-note">
-                        <strong>Set aside after your review:</strong> {setAside.map(row => row.option).join('; ')}. With your
+                        <strong>Set aside after your review:</strong> {ieeeText(setAside.map(row => row.option).join('; '))}. With your
                         changes the weighed arguments no longer support {setAside.length === 1 ? 'it' : 'them'} for this patient, so {setAside.length === 1 ? 'it is' : 'they are'} not
                         part of this plan. Restore or add arguments on the argument board to bring {setAside.length === 1 ? 'it' : 'them'} back.
                       </p>
@@ -504,7 +503,7 @@ export default function CarePlanDocument({
                     changed.has(section.id) ? <span className="badge badge-updated">Updated in v{plan.version}</span> : null)}
                   {!collapsed.has(section.id) && (
                     <div className="markdown-content plan-markdown" data-anchor-root={section.id}>
-                      <Markdown remarkPlugins={[remarkGfm]}>{withCitationLinks(section.content)}</Markdown>
+                      <Markdown remarkPlugins={[remarkGfm]}>{citationMarkdown(section.content, refIds)}</Markdown>
                     </div>
                   )}
                 </section>
@@ -532,22 +531,7 @@ export default function CarePlanDocument({
                 <section className="plan-section references">
                   <header className="plan-section-header static"><h2>References</h2></header>
                   <ol className="reference-list">
-                    {plan.reference_list.map(ref => {
-                      // The citation ends with its DOI or PMID; that identifier is the link to the source.
-                      const ident = ref.doi ? `doi:${ref.doi}` : ref.pmid ? `PMID: ${ref.pmid}` : ''
-                      const citation = ref.citation || ref.title
-                      const text = ident && citation.endsWith(ident) ? citation.slice(0, -ident.length).trimEnd() : citation
-                      return (
-                        <li key={ref.id} id={`ref-${ref.id}`}>
-                          <span className="ref-id">REF-{ref.id}</span>
-                          {ref.kind && <span className="ref-kind">{ref.kind}</span>}
-                          <span className="ref-citation">{text}</span>
-                          {ref.url && (
-                            <> <a className="ref-link" href={ref.url} target="_blank" rel="noopener noreferrer">{ident || 'View source'}</a></>
-                          )}
-                        </li>
-                      )
-                    })}
+                    {plan.reference_list.map(ref => <ReferenceItem key={ref.id} reference={ref} />)}
                   </ol>
                 </section>
               )}

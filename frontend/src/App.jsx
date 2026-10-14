@@ -54,6 +54,7 @@ function App() {
   const [argumentsData, setArgumentsData] = useState([])
   const [qbafArgs, setQbafArgs] = useState({})
   const [optionReviews, setOptionReviews] = useState({})
+  const [references, setReferences] = useState([])
   const [pendingChanges, setPendingChanges] = useState(0)
 
   // Care plan versions and feedback notes
@@ -91,6 +92,7 @@ function App() {
     if (d.arguments) setArgumentsData(d.arguments)
     if (d.qbaf_arguments) setQbafArgs(d.qbaf_arguments)
     if (d.option_reviews) setOptionReviews(d.option_reviews)
+    if (d.references) setReferences(d.references)
     if (typeof d.pending_changes === 'number') setPendingChanges(d.pending_changes)
     if (d.versions) {
       setVersions(d.versions)
@@ -209,6 +211,7 @@ function App() {
     setArgumentsData([])
     setQbafArgs({})
     setOptionReviews({})
+    setReferences([])
     setPendingChanges(0)
     setNotes([])
     setRevisionInfo(null)
@@ -480,6 +483,7 @@ function App() {
                     qbafOptions={latestPlan?.options}
                     qbafArgs={qbafArgs}
                     reviews={optionReviews}
+                    references={references}
                     phase={phase}
                     loading={loading}
                     pendingChanges={pendingChanges}

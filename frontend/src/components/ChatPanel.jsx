@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ieeeText } from './Citations'
 import { Alert, Brain, Chat, CheckCircle, NotePlus, Refresh, Send, Sparkle } from './Icons'
 
 const SUGGESTIONS = [
@@ -15,7 +16,7 @@ function ChatMessage({ message, streaming }) {
       <div className="chat-row user">
         <div className="bubble user">
           {message.tag && <div className="bubble-tag">{message.tag}</div>}
-          <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown></div>
+          <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{ieeeText(message.content)}</Markdown></div>
         </div>
       </div>
     )
@@ -25,7 +26,7 @@ function ChatMessage({ message, streaming }) {
     return (
       <div className={`chat-event ${message.node === 'Error' ? 'error' : ''}`}>
         <Icon size={14} />
-        <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown></div>
+        <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{ieeeText(message.content)}</Markdown></div>
       </div>
     )
   }
@@ -33,7 +34,7 @@ function ChatMessage({ message, streaming }) {
     <div className="chat-row bot">
       <span className={`chat-avatar ${streaming ? 'is-busy' : ''}`} title="Care assistant"><Sparkle size={14} /></span>
       <div className={`bubble bot ${streaming ? 'is-streaming' : ''}`}>
-        <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown></div>
+        <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{ieeeText(message.content)}</Markdown></div>
         {streaming && <span className="caret" />}
       </div>
     </div>

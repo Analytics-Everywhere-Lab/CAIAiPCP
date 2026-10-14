@@ -67,7 +67,9 @@ def _inline(text: str) -> str:
     text = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<i>\1</i>", text)
     text = re.sub(r"(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])", r"<i>\1</i>", text)
     text = text.replace("**", "")
-    text = re.sub(r"\[(REF-\d+)\]", r'<font color="#4f46e5">[\1]</font>', text)
+    # Citations are stored as [REF-n] and printed IEEE-style: [1], [2].
+    text = re.sub(r"(\[REF-\d+\])(?=\[REF-\d+\])", r"\1, ", text)
+    text = re.sub(r"\[REF-(\d+)\]", r'<font color="#4f46e5">[\1]</font>', text)
     return text
 
 
@@ -394,7 +396,7 @@ def render_care_plan_pdf(plan: Dict[str, Any]) -> bytes:
         for ref in references:
             kind = f' <font color="#64748b">({_inline(ref["kind"])})</font>' if ref.get("kind") else ""
             story.append(Paragraph(
-                f'<font color="#4f46e5"><b>[REF-{ref["id"]}]</b></font> '
+                f'<font color="#4f46e5"><b>[{ref["id"]}]</b></font> '
                 f'{_inline(ref.get("citation") or ref.get("title", ""))}{kind}', styles["body"]))
             if ref.get("url"):
                 url = escape(ref["url"], {'"': "&quot;"})

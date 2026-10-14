@@ -1027,7 +1027,13 @@ select.input {
 .set-aside-note { margin: 10px 0 0; padding: 9px 12px; border: 1px dashed var(--border-strong); border-radius: 10px; background: var(--surface-2); color: var(--text-2); font-size: 0.84rem; line-height: 1.55; }
 .set-aside-note strong { color: var(--text); }
 .reference-list { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
-.ref-id { display: inline-block; margin-right: 4px; padding: 1px 6px; border-radius: 6px; background: var(--primary-soft); color: var(--primary); font-size: 0.7rem; font-weight: 800; }
+.reference-list li { padding: 2px 4px; border-radius: 6px; }
+.reference-list li:target, .reference-list li.flash { animation: flash 1.2s ease; }
+.ref-id { display: inline-block; min-width: 2.1em; margin-right: 4px; color: var(--primary); font-weight: 800; font-variant-numeric: tabular-nums; }
+.cite { color: var(--primary); font-weight: 650; text-decoration: none; white-space: nowrap; }
+.cite:hover { text-decoration: underline; }
+.ref-box { margin-bottom: 12px; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); scroll-margin-top: 80px; }
+.ref-box h4 { margin: 0 0 10px; color: var(--text-2); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 .ref-citation { color: var(--text); line-height: 1.55; }
 .ref-kind { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 0.68rem; font-weight: 700; vertical-align: 1px; }
 .ref-link { color: var(--primary); font-weight: 600; overflow-wrap: anywhere; }

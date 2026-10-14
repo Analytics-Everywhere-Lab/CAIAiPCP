@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { TIER_CLASS } from './CarePlanDocument'
+import { CitedText, ReferenceItem, fromIeee, ieeeText } from './Citations'
 import { Check, CheckCircle, ChevronDown, Edit, Plus, Refresh, Trash } from './Icons'
 
 const SOURCE_BADGES = {
@@ -59,7 +60,7 @@ function StancePill({ stance }) {
 }
 
 function ArgumentRow({
-  arg, qbafRow, editable, planExists, editing, removing, answeredBy, rebuttal,
+  arg, qbafRow, editable, planExists, editing, removing, answeredBy, rebuttal, cite,
   onEdit, onEditChange, onSaveEdit, onCancel, onRemove, onRemoveChange, onConfirmRemove
 }) {
   const source = SOURCE_BADGES[arg.source]
@@ -83,9 +84,9 @@ function ArgumentRow({
       <div className="arg-row-body">
         {editing ? (
           <InlineEditor value={editing.text} onChange={onEditChange} onSave={onSaveEdit} onCancel={onCancel}
-            saveLabel="Save" disabled={!editing.text.trim() || editing.text.trim() === stripRoleTag(arg.content).trim()} />
+            saveLabel="Save" disabled={!editing.text.trim() || editing.text.trim() === ieeeText(stripRoleTag(arg.content)).trim()} />
         ) : (
-          <p className="arg-text">{stripRoleTag(arg.content)}</p>
+          <p className="arg-text">{cite(stripRoleTag(arg.content))}</p>
         )}
         {removing && (
           <div className="remove-confirm">
@@ -100,7 +101,7 @@ function ArgumentRow({
           </div>
         )}
         {arg.status === 'edited' && arg.original_content && !editing && (
-          <p className="arg-original">Was: {stripRoleTag(arg.original_content)}</p>
+          <p className="arg-original">Was: {ieeeText(stripRoleTag(arg.original_content))}</p>
         )}
         {(arg.target_arg_id || answers.length > 0 || answeredBy?.length > 0 || arg.same_as) && (
           <div className="arg-links">
@@ -108,20 +109,20 @@ function ArgumentRow({
             {answers.map(({ target, partial }) => {
               const reason = rebuttal(arg.arg_id, target)?.reason
               return (
-                <a key={target} className="arg-link answers" href={`#arg-${target}`} title={reason || ''}>
-                  {partial ? 'Partly answers' : 'Answers'} {target}{reason ? `: ${reason}` : ''}
+                <a key={target} className="arg-link answers" href={`#arg-${target}`} title={ieeeText(reason)}>
+                  {partial ? 'Partly answers' : 'Answers'} {target}{reason ? `: ${ieeeText(reason)}` : ''}
                 </a>
               )
             })}
             {answeredBy?.map(({ source: from, partial }) => (
-              <a key={from} className="arg-link answered" href={`#arg-${from}`} title={rebuttal(from, arg.arg_id)?.reason || ''}>
+              <a key={from} className="arg-link answered" href={`#arg-${from}`} title={ieeeText(rebuttal(from, arg.arg_id)?.reason)}>
                 {partial ? 'Partly answered' : 'Answered'} by {from}, so it weighs less
               </a>
             ))}
             {arg.same_as && <a className="arg-link repeat" href={`#arg-${arg.same_as}`}>Repeats {arg.same_as}, counted once</a>}
           </div>
         )}
-        {arg.validation_note && !editing && <p className="arg-note"><strong>Verifier:</strong> {arg.validation_note}</p>}
+        {arg.validation_note && !editing && <p className="arg-note"><strong>Verifier:</strong> {cite(arg.validation_note)}</p>}
         {arg.flags?.includes('verifier_disagrees') && (
           <p className="arg-warning">The verifier found weak support; it still counts with clinician weight.</p>
         )}
@@ -151,7 +152,7 @@ function ArgumentRow({
 }
 
 export default function ArgumentBoard({
-  options, args, qbafOptions, qbafArgs, reviews, phase, loading, pendingChanges, pendingFeedbackCount,
+  options, args, qbafOptions, qbafArgs, reviews, references, phase, loading, pendingChanges, pendingFeedbackCount,
   onAction, onAccept, onRegenerate
 }) {
   const [activeOption, setActiveOption] = useState(null)
@@ -163,6 +164,8 @@ export default function ArgumentBoard({
 
   const editable = !loading && (phase === 'review' || phase === 'plan')
   const planExists = phase === 'plan'
+  const refById = Object.fromEntries((references || []).map(ref => [ref.id, ref]))
+  const refIds = new Set(Object.keys(refById).map(Number))
 
   useEffect(() => {
     if (options.length > 0) setActiveOption(prev => (prev && options.includes(prev) ? prev : options[0]))
@@ -194,6 +197,22 @@ export default function ArgumentBoard({
     ;(a.partly_rebuts || []).forEach(target => { (answeredBy[target] = answeredBy[target] || []).push({ source: a.arg_id, partial: true }) })
   })
   const rebuttal = (from, to) => review?.rebuttals?.find(r => r.from === from && r.to === to)
+
+  // [n] citations jump to this option's reference box and flash the entry.
+  const jumpToReference = (n, event) => {
+    const target = document.getElementById(`board-ref-${n}`)
+    if (!target) return
+    event.preventDefault()
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    target.classList.remove('flash')
+    void target.offsetWidth
+    target.classList.add('flash')
+  }
+  const cite = (text) => <CitedText text={text} refIds={refIds} anchor="board-ref-" onCite={jumpToReference} />
+  const citedHere = new Set()
+  ;[activeOption, verdict, ...optionArgs.flatMap(a => [a.content, a.original_content, a.validation_note])]
+    .forEach(text => { for (const m of (text || '').matchAll(/\[REF-(\d+)\]/g)) if (refIds.has(Number(m[1]))) citedHere.add(Number(m[1])) })
+  const optionReferences = [...citedHere].sort((a, b) => a - b).map(id => refById[id])
   const pendingTotal = pendingChanges + pendingFeedbackCount
   const counts = {
     support: active.filter(a => a.type === 'support').length,
@@ -225,7 +244,7 @@ export default function ArgumentBoard({
 
   const saveEdit = async (arg) => {
     const tag = (arg.content.match(ROLE_TAG) || [''])[0]
-    await onAction('modify', { arg_id: arg.arg_id, new_content: tag + editing.text.trim() })
+    await onAction('modify', { arg_id: arg.arg_id, new_content: tag + fromIeee(editing.text.trim(), refIds) })
     setEditing(null)
   }
   const confirmRemove = async (arg) => {
@@ -267,8 +286,8 @@ export default function ArgumentBoard({
               <ArgumentRow key={arg.arg_id} arg={arg} qbafRow={qbafArgs?.[arg.arg_id]} editable={editable} planExists={planExists}
                 editing={editing?.argId === arg.arg_id ? editing : null}
                 removing={removing?.argId === arg.arg_id ? removing : null}
-                answeredBy={answeredBy[arg.arg_id]} rebuttal={rebuttal}
-                onEdit={() => { cancelAll(); setEditing({ argId: arg.arg_id, text: stripRoleTag(arg.content) }) }}
+                answeredBy={answeredBy[arg.arg_id]} rebuttal={rebuttal} cite={cite}
+                onEdit={() => { cancelAll(); setEditing({ argId: arg.arg_id, text: ieeeText(stripRoleTag(arg.content)) }) }}
                 onEditChange={text => setEditing(prev => ({ ...prev, text }))}
                 onSaveEdit={() => saveEdit(arg)}
                 onCancel={cancelAll}
@@ -349,7 +368,7 @@ export default function ArgumentBoard({
           const optionRow = qbafByOption[option]
           return (
             <button key={idx} type="button" role="tab" aria-selected={isActive} className={`option-tab ${isActive ? 'active' : ''}`}
-              onClick={() => setActiveOption(option)} title={option}>
+              onClick={() => setActiveOption(option)} title={ieeeText(option)}>
               {optionRow && <span className={`tier-dot ${TIER_CLASS[optionRow.tier]}`} />}
               <span className="option-tab-label">Option {idx + 1}</span>
               <span className="count-pill">{count}</span>
@@ -363,7 +382,7 @@ export default function ArgumentBoard({
           <div className="option-overview-head">
             <div className="option-overview-title">
               <span className="eyebrow">Option {optionIndex + 1}</span>
-              <h3>{activeOption}</h3>
+              <h3>{cite(activeOption)}</h3>
             </div>
             {row && (
               <div className="option-overview-score">
@@ -382,7 +401,7 @@ export default function ArgumentBoard({
             </p>
           )}
           {verdict ? (
-            <p className="option-verdict"><strong>Verification panel:</strong> {verdict}</p>
+            <p className="option-verdict"><strong>Verification panel:</strong> {cite(verdict)}</p>
           ) : (
             <p className="option-verdict muted">
               {phase === 'review'
@@ -401,6 +420,15 @@ export default function ArgumentBoard({
 
       {groups.map(roleGroup)}
 
+      {optionReferences.length > 0 && (
+        <section className="ref-box" aria-label="References">
+          <h4>References</h4>
+          <ol className="reference-list">
+            {optionReferences.map(ref => <ReferenceItem key={ref.id} reference={ref} anchor="board-ref-" />)}
+          </ol>
+        </section>
+      )}
+
       {removed.length > 0 && (
         <div className="removed-args">
           <button type="button" className="link-btn" onClick={() => setShowRemoved(!showRemoved)} aria-expanded={showRemoved}>
@@ -410,7 +438,7 @@ export default function ArgumentBoard({
           {showRemoved && removed.map(arg => (
             <div key={arg.arg_id} className="removed-arg">
               <span className="arg-id">{arg.arg_id}</span>
-              <span className="removed-text">{stripRoleTag(arg.content)}</span>
+              <span className="removed-text">{ieeeText(stripRoleTag(arg.content))}</span>
               {arg.rejection_reason && <span className="removed-reason">({arg.rejection_reason})</span>}
               <button type="button" className="btn ghost xs" disabled={!editable} onClick={() => onAction('restore', { arg_id: arg.arg_id })}>
                 <Refresh size={12} /> Restore

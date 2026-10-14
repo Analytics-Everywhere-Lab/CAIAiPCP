@@ -45,6 +45,12 @@ def test_review_stage_keeps_arguments_out_of_the_chat(client, fake_llm):
     arguments = review[0]["arguments"]
     assert arguments and all(arg["arg_id"].startswith("A") for arg in arguments)
     assert {arg["status"] for arg in arguments} == {"unreviewed"}
+    # Citations point only at retrieved published sources, whose citations (never their text) come along.
+    references = review[0]["references"]
+    assert [ref["id"] for ref in references] == [1, 2] and all(ref["citation"] and ref["url"] for ref in references)
+    assert "Background Falls are common" not in json.dumps(references)
+    cited = [arg["content"] for arg in arguments if "[REF-" in arg["content"]]
+    assert cited and all("[REF-1]" in text and "[REF-9]" not in text for text in cited)
     assert review[0]["options"] == ["Home safety assessment and modification", "Transition to assisted living"]
 
     chat_notes = [e["content"] for e in of_type(events, "message") if e["node"] == "human_review"]
