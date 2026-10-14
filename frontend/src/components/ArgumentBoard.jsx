@@ -332,11 +332,26 @@ export default function ArgumentBoard({
   return (
     <div className="board">
       <div className="board-toolbar">
-        <p className="board-intro">
-          {phase === 'review'
-            ? 'Each discipline on the care team argued the options. Edit or remove any argument right where it is, or add your own under a discipline; then accept to verify them and write the plan.'
-            : 'Contest the arguments behind the plan: edit, remove or add one right where it is, then regenerate the plan.'}
-        </p>
+        {phase !== 'review' && (
+          <p className="board-intro">
+            Contest the arguments behind the plan: edit, remove or add one right where it is, then regenerate the plan.
+          </p>
+        )}
+        <div className="option-tabs" role="tablist" aria-label="Care options">
+          {options.map((option, idx) => {
+            const isActive = activeOption === option
+            const count = args.filter(a => a.option === option && a.status !== 'rejected').length
+            const optionRow = qbafByOption[option]
+            return (
+              <button key={idx} type="button" role="tab" aria-selected={isActive} className={`option-tab ${isActive ? 'active' : ''}`}
+                onClick={() => setActiveOption(option)} title={ieeeText(option)}>
+                {optionRow && <span className={`tier-dot ${TIER_CLASS[optionRow.tier]}`} />}
+                <span className="option-tab-label">Option {idx + 1}</span>
+                <span className="count-pill">{count}</span>
+              </button>
+            )
+          })}
+        </div>
         <div className="board-actions">
           {phase === 'review' && (
             <button type="button" className="btn primary sm" disabled={loading} onClick={onAccept}>
@@ -360,22 +375,6 @@ export default function ArgumentBoard({
           <span> will be applied when you regenerate the care plan.</span>
         </div>
       )}
-
-      <div className="option-tabs" role="tablist" aria-label="Care options">
-        {options.map((option, idx) => {
-          const isActive = activeOption === option
-          const count = args.filter(a => a.option === option && a.status !== 'rejected').length
-          const optionRow = qbafByOption[option]
-          return (
-            <button key={idx} type="button" role="tab" aria-selected={isActive} className={`option-tab ${isActive ? 'active' : ''}`}
-              onClick={() => setActiveOption(option)} title={ieeeText(option)}>
-              {optionRow && <span className={`tier-dot ${TIER_CLASS[optionRow.tier]}`} />}
-              <span className="option-tab-label">Option {idx + 1}</span>
-              <span className="count-pill">{count}</span>
-            </button>
-          )
-        })}
-      </div>
 
       {activeOption && (
         <section className="option-overview">
@@ -402,12 +401,8 @@ export default function ArgumentBoard({
           )}
           {verdict ? (
             <p className="option-verdict"><strong>Verification panel:</strong> {cite(verdict)}</p>
-          ) : (
-            <p className="option-verdict muted">
-              {phase === 'review'
-                ? 'When you accept, each option\'s arguments are verified together: validity, relevance to this patient, repeated points and concerns that another argument answers.'
-                : 'This option will be verified again when you regenerate.'}
-            </p>
+          ) : phase !== 'review' && (
+            <p className="option-verdict muted">This option will be verified again when you regenerate.</p>
           )}
           <div className="option-stats">
             <span>{counts.support} supporting</span>
