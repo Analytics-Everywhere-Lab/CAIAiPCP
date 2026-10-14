@@ -42,7 +42,7 @@ def test_group_result_is_applied_strictly():
     assert (a2.validity_score, a2.relevance, a2.same_as) == (0.5, "low", None)  # same_as must point backwards
     assert (a3.validity_score, a3.relevance, a3.same_as) == (1.0, "moderate", "A2")
     assert a4.flags == ["unverified"] and review["unverified"] == ["A4"]  # no result is never a pass
-    assert review["rebuttals"] == [{"from": "A1", "to": "A2", "reason": "Cheap."}]
+    assert review["rebuttals"] == [{"from": "A1", "to": "A2", "strength": "full", "reason": "Cheap."}]
     assert review["summary"] == "Strong fit." and review["verified"]
 
 
@@ -66,3 +66,26 @@ def test_group_cache_survives_removals_but_not_edits_or_feedback():
     assert not node._reusable(cached, args, state, node._group_basis("Home", state, "fb1"))  # new feedback
     args[0].content = "Grab bars and rails help"
     assert not node._reusable(cached, args, state, basis)  # an edit re-verifies the group
+
+
+def test_options_are_screened_before_the_team_argues_them(monkeypatch):
+    answer = {"options": [
+        {"option": "Move to a nursing home now", "fit": "poor", "why": "Against her wishes."},
+        {"option": "Medication review", "fit": "possible", "why": "Useful."},
+        {"option": "**Home safety program**", "fit": "strong", "why": "Targets falls at home."},
+        {"option": "Home safety program", "fit": "strong", "why": "Duplicate."},
+        {"option": "Day program", "fit": "possible", "why": "Social contact."},
+    ]}
+    monkeypatch.setattr(node, "call_llm_json", lambda *args, **kwargs: answer)
+    state = {"patient_info": "82-year-old living alone", "severity": "Moderate", "enable_streaming": True}
+    assert node._screened_options(state, "", "") == ["Home safety program", "Medication review"]
+    screening = {item["option"]: item for item in state["option_screening"]}
+    assert not screening["Move to a nursing home now"]["kept"]  # a poor fit is never proposed
+    assert not screening["Day program"]["kept"] and len(screening) == 4  # capped at two, duplicates merged
+    # The trace shows only what is proposed, never a candidate the screen turned down.
+    trace = state["current_stream_text"]
+    assert trace.startswith("Option 1: Home safety program.") and "Option 2: Medication review." in trace
+    assert "nursing home" not in trace and "Day program" not in trace and "poor" not in trace
+
+    monkeypatch.setattr(node, "call_llm_json", lambda *args, **kwargs: None)
+    assert node._screened_options(state, "", "") == []  # the caller falls back to the plain-text prompt

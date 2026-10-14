@@ -11,8 +11,7 @@ export const TIER_CLASS = {
   recommended: 'tier-recommended',
   conditional: 'tier-conditional',
   uncertain: 'tier-uncertain',
-  deferred: 'tier-deferred',
-  not_recommended: 'tier-not-recommended'
+  set_aside: 'tier-set-aside'
 }
 
 const RAIL_MIN_WIDTH = 960 // below this the notes move from the margin into the feedback bar
@@ -146,6 +145,10 @@ export default function CarePlanDocument({
   const titles = { [DECISION_ID]: 'Decision Summary', ...Object.fromEntries(sections.map(s => [s.id, s.title])) }
   const changed = new Set(plan.version > 1 ? plan.changed_sections || [] : [])
   const slots = Object.entries(plan.scheduling?.slots || {}).filter(([, list]) => list?.length)
+  // Options the clinician's contest set aside are not part of the plan; they are noted, not ranked as "not recommended".
+  const rankedOptions = [...(plan.options || [])].sort((a, b) => a.rank - b.rank)
+  const planOptions = rankedOptions.filter(row => row.tier !== 'set_aside')
+  const setAside = rankedOptions.filter(row => row.tier === 'set_aside')
   const visibleNotes = isLatest ? notes : []
   const savedNotes = notes.filter(n => !n.draft)
   const numbers = Object.fromEntries(notes.map((n, i) => [n.localId, i + 1]))
@@ -461,7 +464,10 @@ export default function CarePlanDocument({
                       <table className="decision-table">
                         <thead><tr><th>Care option</th><th>Assessment</th><th>Strength</th><th>Leading support</th><th>Leading concern</th></tr></thead>
                         <tbody>
-                          {[...(plan.options || [])].sort((a, b) => a.rank - b.rank).map(row => (
+                          {planOptions.length === 0 && (
+                            <tr><td colSpan={5} className="empty-cell">No option is supported strongly enough to include. Contest the arguments on the argument board.</td></tr>
+                          )}
+                          {planOptions.map(row => (
                             <tr key={row.option_id}>
                               <td className="option-cell">{row.option}</td>
                               <td><span className={`tier-pill ${TIER_CLASS[row.tier]}`}>{row.tier_label}</span></td>
@@ -469,13 +475,24 @@ export default function CarePlanDocument({
                                 <span className="meter small"><span style={{ width: `${Math.round(row.strength * 100)}%` }} /></span>
                                 {row.strength.toFixed(2)}
                               </td>
-                              <td>{row.top_supports?.[0] ? clip(stripRoleTag(row.top_supports[0].content), 140) : '—'}</td>
-                              <td>{row.top_attacks?.[0] ? clip(stripRoleTag(row.top_attacks[0].content), 140) : '—'}</td>
+                              <td title={stripRoleTag(row.top_supports?.[0]?.content || '')}>
+                                {row.top_supports?.[0] ? clip(stripRoleTag(row.top_supports[0].content), 140) : '—'}
+                              </td>
+                              <td title={stripRoleTag(row.top_attacks?.[0]?.content || '')}>
+                                {row.top_attacks?.[0] ? clip(stripRoleTag(row.top_attacks[0].content), 140) : '—'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                    {setAside.length > 0 && (
+                      <p className="set-aside-note">
+                        <strong>Set aside after your review:</strong> {setAside.map(row => row.option).join('; ')}. With your
+                        changes the weighed arguments no longer support {setAside.length === 1 ? 'it' : 'them'} for this patient, so {setAside.length === 1 ? 'it is' : 'they are'} not
+                        part of this plan. Restore or add arguments on the argument board to bring {setAside.length === 1 ? 'it' : 'them'} back.
+                      </p>
+                    )}
                   </div>
                 )}
               </section>

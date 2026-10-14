@@ -168,6 +168,7 @@ def argument_to_dict(arg: Argument, index: int, options: List[str]) -> Dict[str,
         "relevance": arg.relevance,
         "same_as": arg.same_as,
         "rebuts": list(arg.rebuts or []),
+        "partly_rebuts": list(arg.partly_rebuts or []),
     }
 
 

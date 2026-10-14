@@ -150,6 +150,7 @@ def initial_state(patient_info, severity="Default", thread_id=None):
         "writer_directives": [],
         "validation_cache": {},
         "option_reviews": {},
+        "option_screening": [],
         "qbaf": None,
         "previous_qbaf": None,
         "revision_plan": None,

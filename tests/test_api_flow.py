@@ -15,6 +15,10 @@ def sse_events(response):
     return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
 
+def plan2_options(event):
+    return [row["option"] for row in event["care_plan"]["options"]]
+
+
 def of_type(events, kind):
     return [event for event in events if event["type"] == kind]
 
@@ -78,7 +82,9 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
     assert plan["version"] == 1 and plan["strategy"] == "initial"
     assert [s["id"] for s in plan["sections"]] == [
         "summary", "goals", "interventions", "implementation", "risks", "monitoring", "coordination"]
-    assert {row["tier"] for row in plan["options"]} <= {"recommended", "conditional", "uncertain", "deferred", "not_recommended"}
+    assert {row["tier"] for row in plan["options"]} <= {"recommended", "conditional", "uncertain", "set_aside"}
+    # Options were screened for fit before arguing: the poor-fit candidate was never proposed.
+    assert "Immediate nursing home admission" not in plan2_options(final[0])
     # Arguments are verified per option, in one call each, and weighted by relevance:
     # the well-grounded home option is recommended rather than stuck near 0.5.
     assert fake_llm.count(GROUP_VERIFICATION) == 2

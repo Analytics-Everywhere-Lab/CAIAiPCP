@@ -71,18 +71,22 @@ python main.py
 
 ## Contestation Workflow
 
-1. **Review the argument graph.** Each discipline on the care team gives a balanced assessment of every
-   option: one or two supporting arguments and one or two concerns, raised only when they genuinely apply. They
-   appear in the *Arguments* tab (never in the chat) as full-width rows, supporting arguments first, then
-   concerns. Edit or remove an argument right where it is (with an optional reason, which the memory learns
-   from), add your own from the row at the end of each section, or filter by role. Edit, remove (kept for audit and restorable) or add
-   arguments, then accept to generate the plan.
+1. **Review the argument graph.** The planner proposes only options it would recommend for this patient:
+   candidates are screened for fit with the patient's wishes, needs and safety before anyone argues them, and a
+   candidate that fails the screen is never shown. Each discipline on the care team then gives a balanced
+   assessment of every option: one or two supporting arguments and one or two concerns, raised only when they
+   genuinely apply. They appear in the *Arguments* tab (never in the chat), grouped by discipline: each role has
+   its own collapsible card with a coloured initials badge, its counts and, once weighed, its net impact on the
+   option. Edit or remove an argument right where it is (with an optional reason, which the memory learns from),
+   or add your own under a discipline from the row at the end of its card. Removed arguments are kept for audit
+   and can be restored. Then accept to generate the plan.
 2. **Read the care plan.** Arguments are verified per option, as a group, then weighed in a quantitative bipolar
    argumentation framework (QBAF, quadratic energy semantics); see [How options are weighed](#how-options-are-weighed).
-   Each care option gets a strength and an assessment
-   (*Recommended*, *Recommended with conditions*, *Clinical judgment required*, *Not recommended at this time*,
-   *Not recommended*). The plan is a professional document with fixed sections, a decision summary, references,
-   and version history. Use **Download PDF** for a typeset copy, or **Print**.
+   Each care option gets a strength and an assessment (*Recommended*, *Recommended with conditions*, *Clinical
+   judgment required*). The system never turns down an option it proposed: an option is *Set aside* (left out of
+   the plan, noted under the decision table, still contestable on the argument board) only when your own changes
+   leave it without enough support. The plan is a professional document with fixed sections, a decision summary,
+   references, and version history. Use **Download PDF** for a typeset copy, or **Print**.
 3. **Give feedback on the plan.** Select any text in the plan and click **Add feedback**: the text stays
    highlighted with a numbered marker, and your note appears beside it in the margin (or in the feedback bar on
    small screens). You can also comment on a whole section, add feedback on the whole plan from the feedback bar,
@@ -116,17 +120,23 @@ confidence stayed in single digits even for clear cases. The framework now works
    the patient, the clinician's feedback and evidence retrieved for that option. For every argument the panel gives
    its *validity* (is it accurate and well grounded for this patient?) and its *relevance* (does it bear on the
    patient's main risks and stated goals, or is it secondary, or generic?). It also marks *repeated points* and
-   *rebuttals*, where one argument answers an opposing one (for example, a support showing that a cost concern is
-   minor), and writes a short verdict on the option, shown on the argument page.
+   *rebuttals*, where one argument answers an opposing one fully or partly (for example, a support showing that a
+   cost concern is minor), and writes a short summary of how well the arguments support the option, shown on the
+   argument page. It describes the balance; it does not hand down a verdict.
 2. **Weighting.** An argument's base score is validity × relevance weight (high 1.0, moderate 0.65, low 0.3). A
    repeated point adds corroboration at 0.35 of its weight instead of a second full vote. Clinician-authored
    arguments blend validity with clinician authority and count at least as moderately relevant.
 3. **Propagation.** Supports and concerns push the option away from a neutral 0.5 under quadratic energy
-   semantics, and each rebuttal also attacks the argument it answers, so answered concerns weigh less.
+   semantics, and each rebuttal also attacks the argument it answers (a partial answer at half weight), so
+   answered concerns weigh less.
 4. **Decision confidence.** For each option: grounding × (0.5 + 0.5 × decisiveness), where decisiveness is how far
    the option's strength is from 0.5 and grounding is the relevance-weighted mean validity of its arguments. A
    clear verdict from weak arguments is not confident, and an even split between sound arguments is moderately
    confident. The plan reports the mean over options.
+5. **Assessment.** Strength 0.70 or more is *Recommended*, 0.55 or more *Recommended with conditions*, and below
+   that *Clinical judgment required*. Below 0.45 an option is *Set aside* only if the clinician contested it (removed,
+   edited or added one of its arguments, or gave plan feedback that changed them); an option the system proposed
+   and nobody contested stays at *Clinical judgment required*, so the system never rejects its own suggestion.
 
 Verification is cached per option: removing or restoring arguments re-verifies nothing, editing or adding an
 argument re-verifies that option's group in one call, and new free-text feedback re-verifies every option.
