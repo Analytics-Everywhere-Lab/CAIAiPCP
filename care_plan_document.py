@@ -245,10 +245,7 @@ def strip_section_heading(text: str, section_id: Optional[str] = None) -> str:
 
 
 def reference_list(document_references: List[Dict[str, Any]], cited_ids) -> List[Dict[str, Any]]:
-    """The plan's reference list: the published sources it cites, each as a citation with a link.
-
-    Only published literature is ever a reference. Case records of other patients inform the plan
-    as background and are never listed, previewed or sent to the browser."""
+    """The plan's reference list: the published sources it cites, each as a citation with a link."""
     rows = []
     for ref in sorted(document_references or [], key=lambda r: r["id"]):
         if ref["id"] not in cited_ids:

@@ -531,10 +531,6 @@ export default function CarePlanDocument({
               {plan.reference_list?.length > 0 && (
                 <section className="plan-section references">
                   <header className="plan-section-header static"><h2>References</h2></header>
-                  <p className="plan-note">
-                    Published sources cited in this plan. Case records of other patients inform the plan as background only
-                    and are never cited or shown.
-                  </p>
                   <ol className="reference-list">
                     {plan.reference_list.map(ref => {
                       // The citation ends with its DOI or PMID; that identifier is the link to the source.
