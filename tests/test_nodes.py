@@ -1,4 +1,7 @@
+import json
+
 import node
+from tests.conftest import CASE_RECORDS
 from tests.fake_ollama import PLAN_MARKDOWN
 
 
@@ -89,3 +92,24 @@ def test_options_are_screened_before_the_team_argues_them(monkeypatch):
 
     monkeypatch.setattr(node, "call_llm_json", lambda *args, **kwargs: None)
     assert node._screened_options(state, "", "") == []  # the caller falls back to the plain-text prompt
+
+
+def test_case_records_inform_generation_but_are_never_references(fake_llm):
+    state = {"patient_info": "82-year-old living alone after a fall", "enable_streaming": False}
+    node.rag_retrieval(state)
+    assert [case["document"] for case in state["similar_cases"]] == CASE_RECORDS
+    references = state["document_references"]
+    assert [ref["kind"] for ref in references] == ["Practice guideline", "Systematic review"]
+    assert all(ref["source"] == "Europe PMC" and ref["url"].startswith("https://doi.org/") for ref in references)
+    assert not any(case in json.dumps(references) for case in CASE_RECORDS)
+    # Prompts get both, kept apart: numbered published evidence, then unnumbered case background.
+    published, background = state["rag_context"].split("SIMILAR CASE RECORDS")
+    assert "[REF-1] Falls prevention for older adults" in published
+    assert not any(case in published for case in CASE_RECORDS)
+    assert all(case in background for case in CASE_RECORDS)
+    assert "[REF-" not in background and "never mention" in background
+
+
+def test_only_citations_of_published_sources_survive():
+    text = "Grab bars help [REF-1, REF-3] and rails [REF-9]. Exercise [REF-X] too [REF-2]."
+    assert node._clean_citations(text, {1, 2, 3}) == "Grab bars help [REF-1][REF-3] and rails. Exercise too [REF-2]."

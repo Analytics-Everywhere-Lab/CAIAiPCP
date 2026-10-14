@@ -1028,7 +1028,9 @@ select.input {
 .set-aside-note strong { color: var(--text); }
 .reference-list { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
 .ref-id { display: inline-block; margin-right: 4px; padding: 1px 6px; border-radius: 6px; background: var(--primary-soft); color: var(--primary); font-size: 0.7rem; font-weight: 800; }
-.ref-preview { margin-top: 2px; color: var(--text-3); }
+.ref-citation { color: var(--text); line-height: 1.55; }
+.ref-kind { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 0.68rem; font-weight: 700; vertical-align: 1px; }
+.ref-link { color: var(--primary); font-weight: 600; overflow-wrap: anywhere; }
 .memory-used-note { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--lavender-border); border-radius: 12px; background: var(--lavender-soft); font-size: 0.84rem; }
 .memory-used-note ul { margin: 6px 0 0; padding-left: 1.2em; }
 .plan-footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 0.76rem; }

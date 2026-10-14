@@ -94,7 +94,7 @@ sessions = {}
 
 # Shown as a reasoning-trace card when each node starts.
 NODE_MESSAGES = {
-    "rag_retrieval": "Retrieving information from historical medical databases...",
+    "rag_retrieval": "Retrieving published evidence and similar cases...",
     "care_plan_generation": "Generating care options...",
     "argument_generation": "Assembling the care team and preparing plan rationale...",
     "feedback_integration": "Interpreting your feedback as changes to the argument graph...",
@@ -125,6 +125,7 @@ def initial_state(patient_info, severity="Default", thread_id=None):
         "rag_context": "",
         "adaptive_retrieval_summary": None,
         "document_references": [],
+        "similar_cases": [],
         "cited_documents": set(),
         "custom_team_requirements": None,
         "team_selection_rationale": None,

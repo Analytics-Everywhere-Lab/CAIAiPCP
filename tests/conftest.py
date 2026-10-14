@@ -9,11 +9,13 @@ import pytest
 # needed to test the pipeline logic; a small in-memory corpus stands in for them.
 os.environ.setdefault("MEMORY_DIR", tempfile.mkdtemp(prefix="caiaipcp-memory-"))
 
+# Case records of other patients, as the local vector database holds them: background only.
 _DOCUMENTS = [
     "Elderly patient, 79, with recurrent falls at home. Home modification with grab bars reduced falls.",
     "Geriatric case: assisted living transition at 85 with dementia; adjustment difficulties were noted.",
     "Older adult with mild cognitive impairment managed at home with medication blister packs.",
 ]
+CASE_RECORDS = list(_DOCUMENTS)
 
 
 class FakeVectorDB:
@@ -31,6 +33,18 @@ class FakeVectorDB:
 _rag_stub = types.ModuleType("rag.vector_db")
 _rag_stub.MedicalVectorDB = FakeVectorDB
 sys.modules["rag.vector_db"] = _rag_stub
+
+
+@pytest.fixture(autouse=True)
+def literature_search(monkeypatch):
+    """Published literature from a fixed set of Europe PMC records; tests never reach the network."""
+    from rag import literature
+    from tests.fake_literature import fake_fetch
+
+    literature.reset()
+    monkeypatch.setattr(literature, "_fetch", fake_fetch)
+    yield literature
+    literature.reset()
 
 
 @pytest.fixture(autouse=True)

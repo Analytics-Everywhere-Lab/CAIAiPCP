@@ -2,6 +2,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional, Set
 from mcp_utils import _fetch_available_slots_for_roles
+from rag import literature
 from rag.vector_db import MedicalVectorDB
 from state import Argument, GraphState, active_progress
 from llm_caller import call_llm, call_llm_json, stream_text
@@ -104,15 +105,48 @@ def _stream_llm(state: GraphState, prompt: str, temperature: float, max_tokens: 
     return partial
 
 
-def _compact_rag_context(state: GraphState, max_docs: int = 8, max_chars: int = 600) -> str:
-    """Retrieved documents truncated for revision prompts, which only need enough to cite."""
-    documents = state.get("retrieved_documents") or []
-    if not documents:
+MAX_SIMILAR_CASES = 6
+CASE_RECORDS_RULE = ("They describe OTHER patients: use them only as background for clinical reasoning. Never cite, "
+                     "quote or describe them, and never mention that other patients' records were consulted.")
+FULL_CONTEXT = {"max_refs": 10, "max_cases": 5, "ref_chars": 1200, "case_chars": 1200}
+COMPACT_CONTEXT = {"max_refs": 8, "max_cases": 3, "ref_chars": 600, "case_chars": 500}
+
+
+def _venue(ref: Dict[str, Any]) -> str:
+    return ", ".join(part for part in (ref.get("kind"), ref.get("journal"), ref.get("year")) if part)
+
+
+def _knowledge_context(state: GraphState, max_refs: int, max_cases: int, ref_chars: int, case_chars: int) -> str:
+    """Retrieved knowledge for prompts, in two parts that are never mixed: published sources the plan
+    may cite as [REF-n], and case records of other patients that are background only."""
+    references = state.get("document_references") or []
+    cases = state.get("similar_cases") or []
+    if not references and not cases:
         return ""
-    lines = ["RELEVANT MEDICAL DOCUMENTS (excerpts):"]
-    for doc in documents[:max_docs]:
-        lines.append(f"[REF-{doc['doc_id']}] {clip_text(doc['document'], max_chars)}")
+    if references:
+        lines = ["PUBLISHED EVIDENCE (cite as [REF-n] where you use it):"]
+        for ref in references[:max_refs]:
+            lines.append(f"[REF-{ref['id']}] {ref.get('title', '')} ({_venue(ref)}): {clip_text(ref.get('full_content', ''), ref_chars)}")
+    else:
+        lines = ["PUBLISHED EVIDENCE: none retrieved, so use no [REF-n] citations."]
+    if cases:
+        lines.append(f"\nSIMILAR CASE RECORDS (background only). {CASE_RECORDS_RULE}")
+        lines += [f"- {clip_text(case['document'], case_chars)}" for case in cases[:max_cases]]
     return "\n".join(lines)
+
+
+_CITATION_GROUP = re.compile(r"\[(REF-\d+(?:\s*[,;]\s*(?:REF-)?\d+)+)\]")
+_CITATION = re.compile(r"\s?\[REF-(\d+)\]")
+_PLACEHOLDER_CITATION = re.compile(r"\s?\[REF-(?!\d)[^\]]{0,12}\]")
+
+
+def _clean_citations(text: str, valid_ids: Set[int]) -> str:
+    """Keep only citations of the case's published sources: "[REF-1, REF-2]" becomes "[REF-1][REF-2]",
+    and a number that no source has, or a placeholder such as [REF-X], is dropped."""
+    text = _CITATION_GROUP.sub(lambda m: "".join(f"[REF-{n}]" for n in re.findall(r"\d+", m.group(1))), text or "")
+    text = _CITATION.sub(lambda m: m.group(0) if int(m.group(1)) in valid_ids else "", text)
+    return _PLACEHOLDER_CITATION.sub("", text)
+
 
 def determine_severity_from_patient_info(patient_info: str) -> str:
     prompt = f"""You are a medical triage assistant. Based on this patient information, assess the severity of their condition as one of: Low, Moderate, High, or Very High.
@@ -437,7 +471,8 @@ def multi_agent_argument_generator(state: GraphState) -> GraphState:
                 Only raise a concern that genuinely applies to this patient; do not pad with generic risks.
                 State each concern as the risk or cost itself, not as a verdict on the option ("not recommended"):
                 the clinician weighs the arguments and decides.
-                Write each argument as one or two specific sentences about this patient.
+                Write each argument as one or two specific sentences about this patient, and never mention
+                other patients or their case records.
 
                 Format each argument on its own line, starting with "Support:" or "Challenge:"."""
 
@@ -643,38 +678,25 @@ def _strip_role_tag(content: str) -> str:
     return content
 
 
-def _option_evidence(state: GraphState, vector_db: Any, option: str, limit: int = 5) -> List[Dict[str, Any]]:
-    """Evidence for one option: an option-specific search plus the case's most relevant
-    documents, as reference entries (new documents become citable references)."""
+def _option_evidence(state: GraphState, option: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Published evidence for one option: a literature search for the option, then the case's other
+    sources, strongest evidence first. New sources become citable references of the case."""
     references = state.get("document_references")
     if references is None:
         references = state["document_references"] = []
-    by_content = {ref["full_content"]: ref for ref in references}
-    query = f"elderly {option} {clip_text(state.get('patient_info', ''), 160)}"
-    try:
-        results = vector_db.search(query, n_results=3)
-    except Exception as exc:  # retrieval is optional evidence, never a reason to fail
-        print(f"Evidence search failed for option: {exc}")
-        results = []
+    known = {literature.record_key(ref): ref for ref in references}
     found: List[Dict[str, Any]] = []
-    for doc in results:
-        ref = by_content.get(doc["document"])
+    for record in literature.search(f"older adults {option}"):
+        ref = known.get(literature.record_key(record))
         if ref is None:
-            ref = {
-                "id": max((r["id"] for r in references), default=0) + 1,
-                "content": clip_text(doc["document"], 200),
-                "full_content": doc["document"],
-                "similarity_score": doc.get("similarity_score", 0.0),
-                "metadata": doc.get("metadata", {}),
-                "search_query": query,
-                "used_in": [],
-            }
+            ref = literature.as_reference(record, max((r["id"] for r in references), default=0) + 1)
             references.append(ref)
-            by_content[doc["document"]] = ref
-            state.setdefault("retrieved_documents", []).append({**doc, "doc_id": ref["id"], "search_query": query})
+            known[literature.record_key(ref)] = ref
+            state.setdefault("retrieved_documents", []).append(
+                {"doc_id": ref["id"], "document": ref["full_content"], "search_query": ref.get("search_query")})
         if ref not in found:
             found.append(ref)
-    for ref in sorted(references, key=lambda r: -(r.get("similarity_score") or 0.0)):
+    for ref in sorted(references, key=lambda r: -(r.get("evidence_weight") or 0)):
         if len(found) >= limit:
             break
         if ref not in found:
@@ -682,8 +704,20 @@ def _option_evidence(state: GraphState, vector_db: Any, option: str, limit: int 
     return found[:limit]
 
 
+def _option_cases(state: GraphState, vector_db: Any, option: str, limit: int = 3) -> List[str]:
+    """Case records of other patients similar to this option and patient: background for the
+    verification panel, never numbered, cited or shown."""
+    query = f"elderly {option} {clip_text(state.get('patient_info', ''), 160)}"
+    try:
+        results = vector_db.search(query, n_results=limit)
+    except Exception as exc:  # background only, never a reason to fail
+        print(f"Case search failed for option: {exc}")
+        results = []
+    return [doc["document"] for doc in results if doc.get("document")]
+
+
 def _group_prompt(state: GraphState, oid: str, option: str, group: List[Argument], evidence: List[Dict[str, Any]],
-                  context: str, patient_summary: str) -> str:
+                  cases: List[str], context: str, patient_summary: str) -> str:
     def author(arg: Argument) -> str:
         if is_human_authored(arg):
             return "clinician"
@@ -697,8 +731,12 @@ def _group_prompt(state: GraphState, oid: str, option: str, group: List[Argument
         target = f" (responds to {arg.target_arg_id})" if arg.target_arg_id else ""
         rows.append(f"{arg.arg_id} | {stance} | {author(arg)}{target} | {_strip_role_tag(arg.content)}")
     evidence_lines = "\n".join(
-        f"[{ref['id']}] {clip_text(ref['full_content'], 500)}" for ref in evidence
-    ) or "(no documents were retrieved)"
+        f"[{ref['id']}] {ref.get('title', '')} ({_venue(ref)}): {clip_text(ref['full_content'], 500)}" for ref in evidence
+    ) or "(no published sources were retrieved)"
+    case_lines = ""
+    if cases:
+        case_lines = (f"\nSimilar case records (background only). {CASE_RECORDS_RULE}\n"
+                      + "\n".join(f"- {clip_text(case, 400)}" for case in cases) + "\n")
     rows_text = "\n".join(rows)
     return f"""You are the {GROUP_VERIFICATION_ROLE}.
 Verify all the arguments about ONE care option together, as a group: compare them with each other,
@@ -709,9 +747,9 @@ Patient: {patient_summary}
 {context}
 Care option {oid}: {option}
 
-Evidence excerpts:
+Evidence excerpts (published sources):
 {evidence_lines}
-
+{case_lines}
 Arguments (id | stance | author | text):
 {rows_text}
 
@@ -720,8 +758,8 @@ For EVERY argument give:
 - relevance: "high" if it bears on this patient's main risks or stated goals, "moderate" if it matters but is secondary, "low" if it is generic or speculative for this patient.
 - same_as: the id of an EARLIER argument in the list that makes the same point and adds nothing new; if it adds
   anything (a different reason, risk, action or discipline's angle), use null.
-- refs: numbers of the evidence excerpts it relies on, e.g. [1, 3], or [].
-- note: one sentence explaining your judgement.
+- refs: numbers of the published evidence excerpts it relies on, e.g. [1, 3], or [].
+- note: one sentence explaining your judgement, without mentioning case records or other patients.
 Then list rebuttals: when an argument directly answers an argument of the opposite stance (for example a
 support showing that a concern is manageable for this patient), give
 {{"from": "<id>", "to": "<id>", "strength": "full" or "partial", "reason": "<one sentence>"}}:
@@ -916,8 +954,9 @@ def argument_validator(state: GraphState) -> GraphState:
             _report_progress(state, "validation_progress", f"{label}: verifying {len(group)} arguments together")
             _report_progress(state, "current_sub_step",
                              f"🧪 {label}: verifying {len(group)} arguments together against the evidence...")
-        evidence = _option_evidence(state, vector_db, option)
-        prompt = _group_prompt(state, oid, option, group, evidence, context, patient_summary)
+        evidence = _option_evidence(state, option)
+        cases = _option_cases(state, vector_db, option)
+        prompt = _group_prompt(state, oid, option, group, evidence, cases, context, patient_summary)
         result = call_llm_json(prompt, temperature=0.2, max_tokens=max(1200, 180 * len(group) + 500))
         review = _apply_group_result(group, result, evidence)
         reviews[oid] = review
@@ -1009,12 +1048,13 @@ def _feedback_and_directives(state: GraphState, items: List[Dict[str, Any]],
 def _full_plan_prompt(state: GraphState, qbaf: Dict[str, Any], memory_section: str, initial: bool) -> str:
     history = state.get("feedback_history") or []
     directives = state.get("writer_directives") or []
-    context = state.get("rag_context", "") if initial else _compact_rag_context(state)
+    context = _knowledge_context(state, **(FULL_CONTEXT if initial else COMPACT_CONTEXT))
     feedback_text = _feedback_and_directives(state, history, directives, dict(SECTION_TITLES))
     return f"""You are an expert geriatric care planner. Based on the weighed arguments and the medical knowledge provided,
     write a professional, evidence-based care plan for this older adult, who wishes to age in place.
 
-    IMPORTANT: When using information from the medical knowledge provided, cite it using [REF-X] format.
+    IMPORTANT: When you use the published evidence provided, cite it as [REF-X]. The similar case records describe
+    other patients: use them only as background, never cite, quote or describe them, and never mention them.
 
     {context}
 
@@ -1033,8 +1073,8 @@ def _full_plan_prompt(state: GraphState, qbaf: Dict[str, Any], memory_section: s
       with conditions" (state the conditions) and "Clinical judgment required" (say what the clinician should weigh).
     - Options assessed "Set aside" are not part of this plan: do not write them up as interventions and never
       describe any option as "not recommended".
-    - Justify each recommendation with the strongest supporting and challenging arguments above, and cite the medical
-      knowledge as [REF-X] only where it is relevant. Never invent references.
+    - Justify each recommendation with the strongest supporting and challenging arguments above, and cite the published
+      evidence as [REF-X] only where it is relevant. Never invent references and never refer to other patients.
     - Address every clinician feedback item and instruction listed above.
     - Write for the care team and the patient's family: precise, concise and professional.
     - DO NOT use any emoji, icons, or special symbols anywhere in your response. Use plain text and markdown only.
@@ -1076,8 +1116,9 @@ Argument evaluation after the clinician's changes:
 Changes to the arguments since the previous version:
 {changes}
 {_feedback_and_directives(state, items, directives, titles)}{memory_section}
-{_compact_rag_context(state)}
-Cite the medical knowledge as [REF-X] only where it is used; never invent references.
+{_knowledge_context(state, **COMPACT_CONTEXT)}
+Cite the published evidence as [REF-X] only where it is used; never invent references and never refer to other
+patients or their records.
 
 Current text of the section:
 <<<
@@ -1176,6 +1217,8 @@ def care_plan_reviser(state: GraphState) -> GraphState:
             sections = [{"id": "summary", "title": SECTION_TITLES["summary"],
                          "content": "The care plan could not be generated. Please regenerate it."}]
 
+    source_ids = {ref["id"] for ref in state.get("document_references") or []}
+    sections = [{**section, "content": _clean_citations(section.get("content", ""), source_ids)} for section in sections]
     response = sections_to_markdown(sections)
     cited_refs = re.findall(r"\[REF-(\d+)\]", response)
     cited_doc_ids = set(int(ref) for ref in cited_refs)
@@ -1229,7 +1272,7 @@ def care_plan_reviser(state: GraphState) -> GraphState:
         "references": references_text,
         "reference_list": reference_list(state.get("document_references") or [], cited_doc_ids),
         "cited_document_ids": list(cited_doc_ids),
-        "total_documents_retrieved": len(state.get("retrieved_documents", [])),
+        "total_documents_retrieved": len(state.get("document_references") or []),
         "documents_cited": len(cited_doc_ids),
         "patient_info": state["patient_info"],
         "severity": state.get("severity"),
@@ -1249,41 +1292,22 @@ def care_plan_reviser(state: GraphState) -> GraphState:
 
     print(f"Care plan v{version['version']} ({strategy}). Decision confidence: {decision_confidence}")
     print(
-        f"Documents cited: {len(cited_doc_ids)} out of {len(state.get('retrieved_documents', []))} retrieved"
+        f"Published sources cited: {len(cited_doc_ids)} out of {len(state.get('document_references') or [])} retrieved"
     )
 
     return state
 
 
 def _format_references(state: GraphState, cited_doc_ids: Set[int]) -> str:
-    """Format document references for display"""
-    if not cited_doc_ids or len(state["document_references"]) == 0:
-        return "No external references cited."
-
-    references_text = "DOCUMENT REFERENCES:\n\n"
-
-    # Sort by reference ID
-    sorted_refs = sorted(
-        [ref for ref in state["document_references"] if ref["id"] in cited_doc_ids],
-        key=lambda x: x["id"],
+    """The plan's references as text: the published sources it cites, never case records."""
+    cited = sorted((ref for ref in state.get("document_references") or [] if ref["id"] in cited_doc_ids),
+                   key=lambda ref: ref["id"])
+    if not cited:
+        return "No published sources cited."
+    return "\n".join(
+        f"[REF-{ref['id']}] {ref.get('citation') or ref.get('title', '')}" + (f" {ref['url']}" if ref.get("url") else "")
+        for ref in cited
     )
-
-    for ref in sorted_refs:
-        references_text += f"[REF-{ref['id']}]\n"
-        references_text += f"  Search Query: {ref['search_query']}\n"
-        references_text += f"  Relevance Score: {ref['similarity_score']:.2f}\n"
-
-        # Add metadata if available
-        if ref.get("metadata"):
-            if "source" in ref["metadata"]:
-                references_text += f"  Source: {ref['metadata']['source']}\n"
-            if "title" in ref["metadata"]:
-                references_text += f"  Title: {ref['metadata']['title']}\n"
-
-        references_text += f"  Content Preview: {ref['content']}\n"
-        references_text += "\n"
-
-    return references_text
 
 
 def route_after_human_review(state: GraphState) -> str:
@@ -1385,7 +1409,8 @@ def summarize_arguments(arguments: List[Argument]) -> Dict:
 
 
 def rag_retrieval(state: GraphState) -> GraphState:
-    """Agentic RAG: Retrieve relevant documents using RAG"""
+    """Agentic RAG: published literature the plan may cite, and similar case records of other
+    patients that inform generation as background but are never cited or shown."""
     vector_db = MedicalVectorDB()
     prompt = f"""Based on this ELDERLY patient information, generate 3-5 specific search queries 
         to retrieve relevant medical knowledge for GERIATRIC care planning (patients age 65+ ONLY).
@@ -1417,49 +1442,39 @@ def rag_retrieval(state: GraphState) -> GraphState:
 
     state["search_queries"] = queries
 
-    all_documents = []
-    seen_docs = set()  # Avoid duplicates
-    document_references = []
+    # Case records of other patients: background for generation only. They are never
+    # numbered, cited, listed as references or sent to the browser.
+    cases, seen = [], set()
+    for query in queries[:5]:
+        if not query.strip():
+            continue
+        for doc in vector_db.search(query.strip(), n_results=3):
+            text = doc.get("document") or ""
+            if text and text not in seen:
+                seen.add(text)
+                cases.append({"document": text, "similarity_score": doc.get("similarity_score") or 0.0,
+                              "search_query": query.strip()})
+    cases.sort(key=lambda case: -case["similarity_score"])
+    state["similar_cases"] = cases[:MAX_SIMILAR_CASES]
 
-    doc_id = 1
-    for query in queries[:5]:  # Limit to first 5 queries
-        if query.strip():
-            results = vector_db.search(query.strip(), n_results=3)
-            for doc in results:
-                doc_text = doc["document"]
-                if doc_text not in seen_docs:
-                    doc_with_id = doc.copy()
-                    doc_with_id["doc_id"] = doc_id
-                    doc_with_id["search_query"] = query.strip()
-                    all_documents.append(doc_with_id)
-                    seen_docs.add(doc_text)
-                    reference = {
-                        "id": doc_id,
-                        "content": (
-                            doc_text[:200] + "..." if len(doc_text) > 200 else doc_text
-                        ),
-                        "full_content": doc_text,
-                        "similarity_score": doc["similarity_score"],
-                        "metadata": doc.get("metadata", {}),
-                        "search_query": query.strip(),
-                        "used_in": [],  # Will track where this doc was used
-                    }
-                    document_references.append(reference)
-                    doc_id += 1
-
-    state["retrieved_documents"] = all_documents
-    state["document_references"] = document_references
+    # Published literature: the only sources a care plan cites.
+    if state.get("enable_streaming", False):
+        _report_progress(state, "current_sub_step", "📚 Searching the published literature for citable evidence...")
+    records = literature.search_many(queries)
+    references = [literature.as_reference(record, ref_id) for ref_id, record in enumerate(records, 1)]
+    state["document_references"] = references
+    state["retrieved_documents"] = [
+        {"doc_id": ref["id"], "document": ref["full_content"], "search_query": ref.get("search_query")}
+        for ref in references
+    ]
     state["cited_documents"] = set()
-
-    rag_context = "RELEVANT MEDICAL DOCUMENTS:\n\n"
-    for doc in all_documents[:10]:  # Limit context
-        rag_context += (
-            f"[REF-{doc['doc_id']}] (Relevance: {doc['similarity_score']:.2f})\n"
-        )
-        rag_context += f"{doc['document']}\n\n"
-
-    state["rag_context"] = rag_context
-    print(f"Retrieved {len(all_documents)} relevant documents with references")
+    state["rag_context"] = _knowledge_context(state, **FULL_CONTEXT)
+    if state.get("enable_streaming", False):
+        found = f"{len(references)} published source{'' if len(references) == 1 else 's'} found" if references \
+            else "No published sources found (the plan will carry no references)"
+        _report_progress(state, "current_sub_step", f"📚 {found}; similar case records inform the plan as background only")
+    print(f"Retrieved {len(references)} published sources and {len(state['similar_cases'])} similar case records "
+          "(background only, never cited)")
 
     return state
 

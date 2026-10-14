@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from functools import partial
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
@@ -389,13 +390,15 @@ def render_care_plan_pdf(plan: Dict[str, Any]) -> bytes:
     if references:
         number += 1
         story += _section_heading(number, "References", styles, width)
+        # Published sources only: case records of other patients are never references.
         for ref in references:
+            kind = f' <font color="#64748b">({_inline(ref["kind"])})</font>' if ref.get("kind") else ""
             story.append(Paragraph(
-                f'<font color="#4f46e5"><b>[REF-{ref["id"]}]</b></font> {_inline(ref.get("title", ""))} '
-                f'\u00b7 {_inline(ref.get("source", ""))} \u00b7 relevance {ref.get("relevance", 0):.2f}',
-                styles["body"]))
-            if ref.get("preview"):
-                story.append(Paragraph(_inline(_clip(ref["preview"], 320)), styles["small"]))
+                f'<font color="#4f46e5"><b>[REF-{ref["id"]}]</b></font> '
+                f'{_inline(ref.get("citation") or ref.get("title", ""))}{kind}', styles["body"]))
+            if ref.get("url"):
+                url = escape(ref["url"], {'"': "&quot;"})
+                story.append(Paragraph(f'<link href="{url}" color="#4f46e5">{url}</link>', styles["small"]))
 
     notes = plan.get("provenance") or {}
     lines = [

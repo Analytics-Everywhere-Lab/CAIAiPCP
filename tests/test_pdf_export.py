@@ -21,7 +21,9 @@ PLAN = {
     "decision_confidence": 0.42,
     "options": [{"option": "Home safety", "tier": "recommended", "tier_label": "Recommended", "strength": 0.81,
                  "rank": 1, "top_supports": [{"content": "Grab bars help"}], "top_attacks": []}],
-    "reference_list": [{"id": 1, "title": "Record", "source": "MedicalRAG", "preview": "Falls study", "relevance": 0.8}],
+    "reference_list": [{"id": 1, "title": "Falls prevention", "kind": "Practice guideline", "source": "Europe PMC",
+                        "citation": "Smith A, Jones B, Lee C, et al. Falls prevention. Age Ageing. 2022. doi:10.0000/x",
+                        "url": "https://doi.org/10.0000/x", "doi": "10.0000/x"}],
     "scheduling": {"slots": {"Registered Nurse": [{"time_slot": "2026-10-15 09:00"}]}},
     "provenance": {"arguments_considered": 9, "clinician_changes": 2, "feedback_items": 1},
     "memory_used": [{"memory_id": "mem_1"}],
@@ -32,6 +34,7 @@ PLAN = {
 def test_renders_a_pdf():
     pdf = render_care_plan_pdf(PLAN)
     assert pdf.startswith(b"%PDF-") and len(pdf) > 2000
+    assert b"https://doi.org/10.0000/x" in pdf  # each reference links to its published record
 
 
 def test_options_set_aside_are_noted_not_ranked():

@@ -27,6 +27,13 @@ CHAT_RECENT_TURNS = int(os.environ.get("CHAT_RECENT_TURNS", "6"))
 # Room for the assistant's answer. Only the context it reads is compacted, never its reply.
 CHAT_MAX_TOKENS = int(os.environ.get("CHAT_MAX_TOKENS", "4096"))
 
+# Citable knowledge. Case records in the local vector database describe other patients:
+# they inform generation as background but are never cited or shown. References come
+# only from published literature, searched on Europe PMC ("off" disables the search).
+LITERATURE_SEARCH = os.environ.get("LITERATURE_SEARCH", "europepmc").lower()
+LITERATURE_TIMEOUT = float(os.environ.get("LITERATURE_TIMEOUT", "8"))
+LITERATURE_PER_QUERY = int(os.environ.get("LITERATURE_PER_QUERY", "2"))
+
 # QBAF: arguments authored by the clinician are re-verified like any other, but
 # their base score blends the verifier's validity with this prior of clinician authority.
 HUMAN_TRUST_PRIOR = float(os.environ.get("HUMAN_TRUST_PRIOR", "0.9"))
