@@ -447,6 +447,9 @@ select.input {
 }
 .rail-btn:hover { background: var(--primary-soft); }
 .rail-dot { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--rose); }
+.rail-btn.rail-expand { background: transparent; color: var(--text-2); }
+.rail-btn.rail-expand:hover { background: var(--surface-3); color: var(--text); }
+.rail-divider { width: 26px; height: 1px; background: var(--border); }
 
 .workspace { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .workspace-card {
@@ -527,6 +530,8 @@ select.input {
 .panel-chevron { color: var(--text-3); transition: transform 0.2s; }
 .panel.is-collapsed .panel-chevron { transform: rotate(-90deg); }
 .panel-actions { display: flex; gap: 4px; }
+.panel-tools { display: flex; gap: 2px; }
+.panel-collapse-left { color: var(--text-3); }
 .panel-body { min-height: 0; padding: 2px 16px 16px; }
 .panel-body[hidden] { display: none !important; }
 
@@ -905,6 +910,9 @@ select.input {
 .plan-canvas { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 22px 48px; background: var(--surface-sunken); }
 .plan-canvas-inner { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 22px; max-width: 1220px; margin: 0 auto; }
 .plan-paper { position: relative; z-index: 0; flex: 1 1 auto; min-width: 0; max-width: 860px; border-radius: 14px; box-shadow: var(--shadow); }
+/* Without the notes margin the document takes the room. */
+.plan-canvas-inner:not(.with-rail) .plan-paper { max-width: 1120px; }
+.notes-toggle.is-on { color: var(--primary); }
 .plan-paper::before { content: ''; position: absolute; inset: 0; z-index: -1; border: 1px solid var(--border); border-radius: inherit; background: var(--paper); }
 .annotation-layer, .annotation-badges { position: absolute; inset: 0; pointer-events: none; }
 .annotation-layer { z-index: 0; }
@@ -1042,22 +1050,6 @@ select.input {
 .plan-footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 0.76rem; }
 
 .notes-rail { position: relative; flex: 0 0 280px; width: 280px; }
-.rail-empty {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 18px 14px;
-  border: 1.5px dashed var(--border-strong);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--text-3);
-  font-size: 0.8rem;
-  text-align: center;
-}
-.rail-empty p { margin: 0; }
 .note-card {
   position: absolute;
   left: 0;
@@ -1377,6 +1369,7 @@ select.input {
   .layout, .app.sidebar-collapsed .layout { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
   .sidebar { overflow: visible; }
   .sidebar-rail { flex-direction: row; justify-content: center; }
+  .rail-divider { width: 1px; height: 26px; }
   .panel-chat { min-height: 0; }
   .chat-log { max-height: 55vh; }
   .workspace-card { min-height: 72vh; overflow: visible; }

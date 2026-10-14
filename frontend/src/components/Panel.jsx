@@ -4,7 +4,7 @@ import { ChevronDown } from './Icons'
 // A card whose body can be collapsed; the choice is remembered per panel id.
 // The body stays mounted while collapsed so drafts and scroll positions survive.
 export default function Panel({
-  id, title, subtitle, icon, badge, actions, children, defaultOpen = true, className = '', bodyClassName = '',
+  id, title, subtitle, icon, badge, actions, tools, children, defaultOpen = true, className = '', bodyClassName = '',
   open: controlledOpen, onToggle
 }) {
   const [storedOpen, setStoredOpen] = usePersistentState(`caiaipcp:panel:${id}`, defaultOpen)
@@ -23,6 +23,7 @@ export default function Panel({
           <ChevronDown className="panel-chevron" />
         </button>
         {actions && open && <div className="panel-actions">{actions}</div>}
+        {tools && <div className="panel-tools">{tools}</div>}
       </header>
       <div id={`panel-body-${id}`} className={`panel-body ${bodyClassName}`} hidden={!open}>
         {children}

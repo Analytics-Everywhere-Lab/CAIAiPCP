@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useElementWidth } from '../hooks'
+import { useElementWidth, usePersistentState } from '../hooks'
 import { layoutCards, rectsWithin, resolveRange, selectionAnchor } from './annotations'
 import { CitedText, ReferenceItem, citationMarkdown, clipCited, ieeeText } from './Citations'
 import {
-  Check, CheckCircle, ChevronDown, Collapse, Download, Edit, Expand, Note, NotePlus, Printer, Refresh, Trash, X
+  Check, CheckCircle, ChevronDown, Collapse, Download, Edit, Expand, Eye, EyeOff, Note, NotePlus, Printer, Refresh, Trash, X
 } from './Icons'
 
 export const TIER_CLASS = {
@@ -136,6 +136,7 @@ export default function CarePlanDocument({
   const [layoutTick, setLayoutTick] = useState(0)
   const [listOpen, setListOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [notesHidden, setNotesHidden] = usePersistentState('caiaipcp:notes-hidden', false)
 
   const sections = plan.sections || []
   const titles = { [DECISION_ID]: 'Decision Summary', ...Object.fromEntries(sections.map(s => [s.id, s.title])) }
@@ -148,6 +149,9 @@ export default function CarePlanDocument({
   const refIds = new Set((plan.reference_list || []).map(ref => ref.id))
   const visibleNotes = isLatest ? notes : []
   const savedNotes = notes.filter(n => !n.draft)
+  // The notes (margin cards, highlights and markers) appear with the first note and can be hidden.
+  const showNotes = visibleNotes.length > 0 && !notesHidden
+  const railShown = railMode && showNotes
   const numbers = Object.fromEntries(notes.map((n, i) => [n.localId, i + 1]))
   const noteLabel = (note) => (note.kind === 'general' ? 'Whole plan' : titles[note.section_id] || 'Care plan')
   const totalPending = savedNotes.length + pendingChanges
@@ -193,7 +197,7 @@ export default function CarePlanDocument({
       next[note.localId] = { rects, top, bottom, order }
     })
     setAnchors(next)
-  }, [notes, plan, collapsed, railMode, layoutTick, isLatest]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [notes, plan, collapsed, railMode, railShown, layoutTick, isLatest]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Measure note cards so they can be stacked without overlapping.
   useLayoutEffect(() => {
@@ -249,6 +253,7 @@ export default function CarePlanDocument({
 
   const startNote = (note) => {
     settleEditing()
+    setNotesHidden(false)
     const id = onCreateNote({ text: '', draft: true, ...note })
     setEditingId(id)
     setActiveId(id)
@@ -304,6 +309,7 @@ export default function CarePlanDocument({
   }
 
   const focusNote = (id) => {
+    setNotesHidden(false)
     setActiveId(id)
     setFlashId(id)
     setTimeout(() => setFlashId(current => (current === id ? null : current)), 1200)
@@ -390,6 +396,14 @@ export default function CarePlanDocument({
             : <span className="status-chip draft">Draft for clinical review</span>}
         </div>
         <div className="plan-toolbar-group">
+          {visibleNotes.length > 0 && (
+            <button type="button" className={`btn ghost sm notes-toggle ${notesHidden ? '' : 'is-on'}`}
+              onClick={() => setNotesHidden(hidden => !hidden)} aria-pressed={!notesHidden}
+              title={notesHidden ? 'Show your feedback notes beside the plan' : 'Hide the notes to read the plan on its own'}>
+              {notesHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+              {notesHidden ? `Show notes (${savedNotes.length})` : 'Hide notes'}
+            </button>
+          )}
           <button type="button" className="icon-btn" onClick={toggleAll} title={allCollapsed ? 'Expand all sections' : 'Collapse all sections'}>
             {allCollapsed ? <Expand /> : <Collapse />}
           </button>
@@ -415,10 +429,10 @@ export default function CarePlanDocument({
 
       <div className="plan-canvas" ref={canvasRef} onMouseUp={updateSelection} onKeyUp={updateSelection}
         onTouchEnd={() => setTimeout(updateSelection, 50)}>
-        <div className={`plan-canvas-inner ${railMode ? 'with-rail' : ''}`} ref={innerRef}>
+        <div className={`plan-canvas-inner ${railShown ? 'with-rail' : ''}`} ref={innerRef}>
           <div className="plan-paper" ref={paperRef}>
             <div className="annotation-layer" aria-hidden="true">
-              {visibleNotes.map(note => (anchors[note.localId]?.rects || []).map((rect, i) => (
+              {showNotes && visibleNotes.map(note => (anchors[note.localId]?.rects || []).map((rect, i) => (
                 <span key={`${note.localId}-${i}`} data-note={i === 0 ? note.localId : undefined}
                   className={`note-highlight ${note.draft ? 'is-draft' : ''} ${activeId === note.localId ? 'is-active' : ''} ${flashId === note.localId ? 'is-flash' : ''}`}
                   style={{ top: rect.top - 1, left: rect.left - 1, width: rect.width + 2, height: rect.height + 2 }} />
@@ -552,7 +566,7 @@ export default function CarePlanDocument({
             </article>
 
             <div className="annotation-badges">
-              {visibleNotes.map(note => {
+              {showNotes && visibleNotes.map(note => {
                 const rects = anchors[note.localId]?.rects || []
                 const last = rects[rects.length - 1]
                 if (!last || note.draft) return null
@@ -568,14 +582,8 @@ export default function CarePlanDocument({
             </div>
           </div>
 
-          {railMode && isLatest && (
+          {railShown && (
             <aside className="notes-rail" style={{ minHeight: railHeight }} aria-label="Feedback notes">
-              {visibleNotes.length === 0 && (
-                <div className="rail-empty">
-                  <NotePlus size={18} />
-                  <p>Select any text in the plan and choose <strong>Add feedback</strong>. Your notes appear here, next to the text they are about.</p>
-                </div>
-              )}
               {visibleNotes.filter(note => anchors[note.localId]).map(note => renderCard(note, { top: positions[note.localId] }))}
             </aside>
           )}

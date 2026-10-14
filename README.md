@@ -202,8 +202,11 @@ on this machine (`localhost` / `127.0.0.1`). To serve the frontend from another 
 ## Interface
 
 - Light and dark themes (pastel white and blue), following the system setting until you pick one.
-- Collapsible modules: the side panel (patient and assistant), each panel, each plan section, each team role on
-  the argument board, completed reasoning steps, and memory details. Choices are remembered in the browser.
+- Collapsible modules: the patient and assistant panels fold to the left into a narrow rail (the button in either
+  panel's header, or in the top bar), and each panel, plan section, team role on the argument board, completed
+  reasoning step and memory detail collapses on its own. Choices are remembered in the browser.
+- Feedback notes: the notes margin appears with your first note, and **Hide notes** / **Show notes** in the plan
+  toolbar hides the margin, highlights and markers so the plan reads on its own at full width.
 - Responsive layout: on narrow screens the panels stack, the plan toolbar and feedback bar stay in reach, and
   notes open below the text they are about.
 - Animations are kept subtle and switch off when the system asks for reduced motion.
