@@ -58,6 +58,10 @@ To set up the project, follow these steps:
 python rag/indexer.py
 ```
 
+   The vector database holds MedicalRAG case records, which describe other patients. They are retrieved as
+   background for every prompt but are never cited, quoted, listed as references or sent to the browser. See
+   [Knowledge and references](#knowledge-and-references).
+
 2. Start the application:
 
 ```bash
@@ -86,7 +90,8 @@ python main.py
    judgment required*). The system never turns down an option it proposed: an option is *Set aside* (left out of
    the plan, noted under the decision table, still contestable on the argument board) only when your own changes
    leave it without enough support. The plan is a professional document with fixed sections, a decision summary,
-   references, and version history. Use **Download PDF** for a typeset copy, or **Print**.
+   references to published evidence only (never to other patients' records), and version history. Use **Download
+   PDF** for a typeset copy, or **Print**.
 3. **Give feedback on the plan.** Select any text in the plan and click **Add feedback**: the text stays
    highlighted with a numbered marker, and your note appears beside it in the margin (or in the feedback bar on
    small screens). You can also comment on a whole section, add feedback on the whole plan from the feedback bar,
@@ -148,6 +153,24 @@ new case:   rag_retrieval -> care_plan_generation -> argument_generation -> huma
 contest:    argument_validation -> ... -> plan_revision -> memory_reflection
 feedback:   feedback_integration -> argument_validation -> ... -> plan_revision -> memory_reflection
 ```
+
+## Knowledge and references
+
+Each case draws on two kinds of knowledge, kept apart in every prompt:
+
+- **Published evidence** (cited): peer-reviewed papers, reviews and guidelines found on
+  [Europe PMC](https://europepmc.org) (which covers PubMed/MEDLINE) for the case's search queries and for each
+  care option. Practice guidelines and systematic reviews rank first; case reports, letters, editorials and
+  retracted work are excluded. These are the only sources the plan may cite as `[REF-n]`, and the References
+  section (and the PDF) lists each as a citation with its DOI or PubMed link.
+- **Similar case records** (background only): records of other patients from the local vector database. The care
+  team, the verification panel and the writer read them, unnumbered, with the instruction never to cite, quote or
+  describe them. They stay on the server: they are never listed as references, previewed, sent to the browser,
+  written into the PDF or given to the assistant.
+
+After the plan is written, any `[REF-n]` that does not match a published source is removed. The literature search
+needs outbound access to `www.ebi.ac.uk`; without it the plan is written without references and the search pauses
+for ten minutes instead of waiting for a timeout on every query. Set `LITERATURE_SEARCH=off` to disable it.
 
 ## Language Models
 
@@ -235,6 +258,9 @@ python scripts/consolidate_memory.py --review mem_1234abcd --decision approve
 | `SETTINGS_PATH` | `data/settings.json` | Where Settings are saved |
 | `CORS_ORIGINS` | none | Extra front-end origins allowed to call the API (comma-separated) |
 | `HUMAN_TRUST_PRIOR`, `HUMAN_TRUST_WEIGHT` | `0.9`, `0.5` | Base score of clinician-authored arguments: blend of verified validity and clinician authority |
+| `LITERATURE_SEARCH` | `europepmc` | Published-literature search for references (`off` to disable) |
+| `LITERATURE_TIMEOUT` | `8` | Seconds to wait for one literature search |
+| `LITERATURE_PER_QUERY` | `2` | Published sources kept per search query |
 | `VITE_API_BASE` (frontend) | `http://localhost:8001` | Backend URL used by the frontend |
 
 ## API
@@ -254,8 +280,8 @@ python scripts/consolidate_memory.py --review mem_1234abcd --decision approve
 
 ## Tests
 
-The test suite stubs the vector database, the Ollama endpoint and the Claude client, so it runs without a GPU,
-a model or an API key:
+The test suite stubs the vector database, the literature search, the Ollama endpoint and the Claude client, so it
+runs without a GPU, a model, network access or an API key:
 
 ```bash
 pip install pytest httpx

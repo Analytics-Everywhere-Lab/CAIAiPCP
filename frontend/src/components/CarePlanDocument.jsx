@@ -531,13 +531,27 @@ export default function CarePlanDocument({
               {plan.reference_list?.length > 0 && (
                 <section className="plan-section references">
                   <header className="plan-section-header static"><h2>References</h2></header>
+                  <p className="plan-note">
+                    Published sources cited in this plan. Case records of other patients inform the plan as background only
+                    and are never cited or shown.
+                  </p>
                   <ol className="reference-list">
-                    {plan.reference_list.map(ref => (
-                      <li key={ref.id} id={`ref-${ref.id}`}>
-                        <span className="ref-id">REF-{ref.id}</span> {ref.title} · {ref.source} · relevance {ref.relevance.toFixed(2)}
-                        <div className="ref-preview">{clip(ref.preview, 260)}</div>
-                      </li>
-                    ))}
+                    {plan.reference_list.map(ref => {
+                      // The citation ends with its DOI or PMID; that identifier is the link to the source.
+                      const ident = ref.doi ? `doi:${ref.doi}` : ref.pmid ? `PMID: ${ref.pmid}` : ''
+                      const citation = ref.citation || ref.title
+                      const text = ident && citation.endsWith(ident) ? citation.slice(0, -ident.length).trimEnd() : citation
+                      return (
+                        <li key={ref.id} id={`ref-${ref.id}`}>
+                          <span className="ref-id">REF-{ref.id}</span>
+                          {ref.kind && <span className="ref-kind">{ref.kind}</span>}
+                          <span className="ref-citation">{text}</span>
+                          {ref.url && (
+                            <> <a className="ref-link" href={ref.url} target="_blank" rel="noopener noreferrer">{ident || 'View source'}</a></>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ol>
                 </section>
               )}

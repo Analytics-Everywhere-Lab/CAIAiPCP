@@ -245,18 +245,28 @@ def strip_section_heading(text: str, section_id: Optional[str] = None) -> str:
 
 
 def reference_list(document_references: List[Dict[str, Any]], cited_ids) -> List[Dict[str, Any]]:
+    """The plan's reference list: the published sources it cites, each as a citation with a link.
+
+    Only published literature is ever a reference. Case records of other patients inform the plan
+    as background and are never listed, previewed or sent to the browser."""
     rows = []
     for ref in sorted(document_references or [], key=lambda r: r["id"]):
         if ref["id"] not in cited_ids:
             continue
         metadata = ref.get("metadata") or {}
+        title = ref.get("title") or metadata.get("title") or "Untitled source"
         rows.append({
             "id": ref["id"],
-            "title": metadata.get("title") or "Medical knowledge base record",
-            "source": metadata.get("source") or "MedicalRAG",
-            "preview": ref.get("content", ""),
-            "relevance": round(ref.get("similarity_score", 0.0), 2),
-            "search_query": ref.get("search_query"),
+            "title": title,
+            "citation": ref.get("citation") or title,
+            "authors": ref.get("authors") or "",
+            "journal": ref.get("journal") or "",
+            "year": ref.get("year") or "",
+            "kind": ref.get("kind") or "",
+            "doi": ref.get("doi") or "",
+            "pmid": ref.get("pmid") or "",
+            "url": ref.get("url") or "",
+            "source": ref.get("source") or metadata.get("source") or "",
         })
     return rows
 

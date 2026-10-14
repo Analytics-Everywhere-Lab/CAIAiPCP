@@ -53,6 +53,7 @@ class CarePlanGradioInterface:
             "rag_context": "",
             "adaptive_retrieval_summary": None,
             "document_references": [],
+            "similar_cases": [],
             "cited_documents": set(),
             # Multi-agent healthcare team management
             "custom_team_requirements": None,
@@ -256,19 +257,20 @@ class CarePlanGradioInterface:
             for ref in final_state["document_references"]:
                 ref_data[ref["id"]] = ref
 
-            # Group citations by category for better organization
+            # Published sources only (case records of other patients are never references),
+            # grouped by strength of evidence: guidelines and systematic reviews first.
             primary_citations = []
             supporting_citations = []
 
             for ref_id in sorted(cited_ref_ids):
                 if ref_id in ref_data:
                     ref = ref_data[ref_id]
-                    citation_text = f"""**[REF-{ref_id}]**
-                    📍 Search Query: {ref['search_query']}
+                    link = f"\n{ref['url']}" if ref.get("url") else ""
+                    citation_text = f"""**[REF-{ref_id}]** {ref.get('citation') or ref.get('title', '')}{link}
                     {'-' * 40}
-                    {ref['full_content']}"""
+                    {ref.get('full_content', '')}"""
 
-                    if ref["similarity_score"] > 0.7:
+                    if (ref.get("evidence_weight") or 0) >= 3:
                         primary_citations.append(citation_text)
                     else:
                         supporting_citations.append(citation_text)

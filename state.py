@@ -51,12 +51,14 @@ class GraphState(TypedDict):
     human_review_complete: bool
     user_action: Optional[str]
 
-    # RAG and document retrieval
-    retrieved_documents: List[Dict[str, Any]]
+    # RAG and document retrieval. Only published sources are citable references; case
+    # records of other patients are prompt background and never leave the server.
+    retrieved_documents: List[Dict[str, Any]]  # the published sources' text, by reference id
     search_queries: List[str]
     rag_context: str  # Always a string, can be empty
     adaptive_retrieval_summary: Optional[Dict[str, Any]]
-    document_references: List[Dict[str, Any]]
+    document_references: List[Dict[str, Any]]  # published sources, cited as [REF-<id>]
+    similar_cases: List[Dict[str, Any]]  # case records of other patients: background only, never cited or shown
     cited_documents: Set[int]
 
     # Multi-agent healthcare team management

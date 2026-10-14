@@ -4,6 +4,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import CASE_RECORDS
+
 PATIENT = ("82-year-old female living alone. Mild cognitive impairment, history of falls "
            "but wants to stay at home.")
 
@@ -97,6 +99,15 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
     answered = reviews["O1"]["rebuttals"][0]
     assert answered["to"] in by_id[answered["from"]]["rebuts"] and by_id[answered["to"]]["relevance"] == "low"
     assert plan["reference_list"] and plan["reference_list"][0]["id"] == 1
+    # References are published sources only, and no case record of another patient reaches the browser.
+    assert all(ref["source"] == "Europe PMC" and ref["url"] for ref in plan["reference_list"])
+    sent = json.dumps(events) + json.dumps(client.get(f"/api/chat/state/{thread_id}").json())
+    assert not any(case[:40] in sent for case in CASE_RECORDS)
+    assert "Background Falls are common" not in sent  # nor the text of the published sources
+    # The case records still inform the plan: the writer reads them as background, apart from the sources.
+    writer_prompt = next(c["prompt"] for c in fake_llm.calls if "write a professional, evidence-based care plan" in c["prompt"])
+    assert CASE_RECORDS[0] in writer_prompt.split("SIMILAR CASE RECORDS")[1]
+    assert "[REF-1] Falls prevention for older adults" in writer_prompt
     assert all(arg["score"] is not None for arg in final[0]["arguments"] if arg["status"] != "rejected")
     assert any("v1 is ready" in e["content"] for e in of_type(events, "message") if e["node"] == "system")
     # The clinician's changes are learned in the background after the plan is delivered.
@@ -114,6 +125,8 @@ def test_full_contestation_cycle(client, fake_llm, memory_service):
     for arg in final[0]["arguments"]:
         assert arg["arg_id"] + "|" in chat_prompt
     assert "## Risk Management" in chat_prompt
+    assert not any(case[:40] in chat_prompt for case in CASE_RECORDS)  # the assistant never sees case records
+    assert "REFERENCES CITED: [REF-1] Smith A, Jones B, Lee C, et al." in chat_prompt  # but knows what it cites
     assert of_type(reply, "done")[0]["context"]["prompt_tokens"] > 0
 
     # Contest from the argument table after the plan exists: only changed arguments are re-verified.

@@ -162,6 +162,10 @@ def compact_case_context(state: Dict[str, Any], budget: int = CHAT_CONTEXT_TOKEN
             f"PLAN: v{plan.get('version')} ({plan.get('status', 'draft')}), {plan.get('strategy_label', '')}, "
             f"decision confidence {round(100 * (plan.get('decision_confidence') or 0))}%"
         )
+    references = plan.get("reference_list") or []
+    if references:  # published sources only: case records of other patients never reach the assistant
+        header.append("REFERENCES CITED: " + " ; ".join(
+            f"[REF-{ref['id']}] {clip_text(ref.get('citation') or ref.get('title', ''), 140)}" for ref in references[:8]))
     feedback = state.get("feedback_history") or []
     if feedback:
         header.append("CLINICIAN FEEDBACK: " + " ; ".join(

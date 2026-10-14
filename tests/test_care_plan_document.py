@@ -85,11 +85,15 @@ def test_merge_keeps_untouched_sections_verbatim():
     assert [s["content"] for s in merged if s["id"] != "risks"] == [s["content"] for s in sections if s["id"] != "risks"]
 
 
-def test_reference_list_only_includes_cited_documents():
-    refs = [{"id": 1, "content": "a", "similarity_score": 0.9, "metadata": {}},
-            {"id": 2, "content": "b", "similarity_score": 0.7, "metadata": {"title": "T", "source": "S"}}]
+def test_reference_list_lists_cited_sources_as_citations_without_their_text():
+    refs = [{"id": 1, "title": "Uncited review", "content": "a", "full_content": "abstract a"},
+            {"id": 2, "title": "Falls prevention", "citation": "Doe J. Falls prevention. Age Ageing. 2022. doi:10.1/x",
+             "url": "https://doi.org/10.1/x", "doi": "10.1/x", "kind": "Review", "journal": "Age Ageing", "year": "2022",
+             "source": "Europe PMC", "content": "abstract b", "full_content": "abstract b"}]
     rows = reference_list(refs, {2})
-    assert rows == [{"id": 2, "title": "T", "source": "S", "preview": "b", "relevance": 0.7, "search_query": None}]
+    assert [row["id"] for row in rows] == [2]
+    assert rows[0]["citation"].startswith("Doe J. Falls prevention") and rows[0]["url"] == "https://doi.org/10.1/x"
+    assert "abstract b" not in str(rows)  # the list carries citations, not document text
 
 
 def test_template_prompt_lists_every_section():
